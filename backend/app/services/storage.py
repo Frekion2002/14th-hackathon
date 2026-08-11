@@ -21,6 +21,9 @@ class StorageGateway:
     def object_uri(self, key: str) -> str:
         raise NotImplementedError
 
+    def object_key(self, uri: str) -> str:
+        raise NotImplementedError
+
     async def create_upload_url(self, key: str, content_type: str) -> str:
         raise NotImplementedError
 
@@ -41,6 +44,9 @@ class LocalStorage(StorageGateway):
 
     def object_uri(self, key: str) -> str:
         return f"local://{key.lstrip('/')}"
+
+    def object_key(self, uri: str) -> str:
+        return uri.removeprefix("local://").lstrip("/")
 
     def _path(self, uri_or_key: str) -> Path:
         key = uri_or_key.removeprefix("local://").lstrip("/")
@@ -112,6 +118,9 @@ class S3Storage(StorageGateway):
 
     def object_uri(self, key: str) -> str:
         return f"s3://{self.bucket}/{key.lstrip('/')}"
+
+    def object_key(self, uri: str) -> str:
+        return self._key(uri)
 
     def _key(self, uri: str) -> str:
         prefix = f"s3://{self.bucket}/"

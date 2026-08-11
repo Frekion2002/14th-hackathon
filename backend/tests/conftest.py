@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+
+# Unit/API tests must not accidentally instantiate real providers just because a
+# developer's ignored .env has MOCK_EXTERNAL_SERVICES=false.
+os.environ["MOCK_EXTERNAL_SERVICES"] = "true"
 
 from app.config import Settings
 from app.main import create_app

@@ -28,8 +28,11 @@ class LiveKitGateway:
     def participant_token(self, room_name: str, identity: str, name: str) -> str:
         raise NotImplementedError
 
-    async def start_participant_egress(
-        self, room_name: str, identity: str, object_key: str
+    async def find_audio_track_id(self, room_name: str, identity: str) -> str | None:
+        raise NotImplementedError
+
+    async def start_track_egress(
+        self, room_name: str, track_id: str, object_key: str
     ) -> EgressStarted:
         raise NotImplementedError
 
@@ -48,10 +51,13 @@ class MockLiveKitGateway(LiveKitGateway):
         del name
         return f"mock-livekit-token:{room_name}:{identity}"
 
-    async def start_participant_egress(
-        self, room_name: str, identity: str, object_key: str
+    async def find_audio_track_id(self, room_name: str, identity: str) -> str | None:
+        return f"mock-audio-track:{room_name}:{identity}"
+
+    async def start_track_egress(
+        self, room_name: str, track_id: str, object_key: str
     ) -> EgressStarted:
-        del room_name, identity
+        del room_name, track_id
         return EgressStarted(egress_id=f"EG_{uuid.uuid4().hex}", object_key=object_key)
 
     async def stop_egress(self, egress_id: str) -> None:
@@ -121,28 +127,58 @@ class RealLiveKitGateway(LiveKitGateway):
             force_path_style=self.settings.s3_force_path_style,
         )
 
-    async def start_participant_egress(
-        self, room_name: str, identity: str, object_key: str
+    async def find_audio_track_id(self, room_name: str, identity: str) -> str | None:
+        client = self._client()
+        try:
+            response = await client.room.list_participants(
+                api.ListParticipantsRequest(room=room_name)
+            )
+            participant = next(
+                (item for item in response.participants if item.identity == identity), None
+            )
+            if participant is None:
+                return None
+            track = next(
+                (
+                    item
+                    for item in participant.tracks
+                    if item.type == api.TrackType.AUDIO
+                    and item.source == api.TrackSource.MICROPHONE
+                ),
+                None,
+            )
+            return track.sid if track else None
+        except Exception as exc:
+            raise LiveKitError(f"LiveKit 오디오 트랙 조회 실패: {exc}") from exc
+        finally:
+            await client.aclose()
+
+    def _track_egress_request(
+        self, room_name: str, track_id: str, object_key: str
+    ) -> api.TrackEgressRequest:
+        return api.TrackEgressRequest(
+            room_name=room_name,
+            track_id=track_id,
+            # Track Egress preserves the published Opus stream and therefore
+            # produces OGG without running the Participant video transcode path.
+            file=api.DirectFileOutput(
+                filepath=object_key,
+                disable_manifest=True,
+                s3=self._s3_upload(),
+            ),
+        )
+
+    async def start_track_egress(
+        self, room_name: str, track_id: str, object_key: str
     ) -> EgressStarted:
         client = self._client()
         try:
-            info = await client.egress.start_participant_egress(
-                api.ParticipantEgressRequest(
-                    room_name=room_name,
-                    identity=identity,
-                    file_outputs=[
-                        api.EncodedFileOutput(
-                            file_type=api.EncodedFileType.OGG,
-                            filepath=object_key,
-                            disable_manifest=True,
-                            s3=self._s3_upload(),
-                        )
-                    ],
-                )
+            info = await client.egress.start_track_egress(
+                self._track_egress_request(room_name, track_id, object_key)
             )
             return EgressStarted(egress_id=info.egress_id, object_key=object_key)
         except Exception as exc:  # provider error is normalized at this boundary
-            raise LiveKitError(f"LiveKit Egress 시작 실패: {exc}") from exc
+            raise LiveKitError(f"LiveKit Track Egress 시작 실패: {exc}") from exc
         finally:
             await client.aclose()
 

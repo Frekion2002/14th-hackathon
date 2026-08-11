@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.6-flash"
     gemini_base_url: str = "https://generativelanguage.googleapis.com"
+    gemini_max_output_tokens: int = 2048
 
     storage_backend: Literal["local", "s3"] = "local"
     local_storage_path: Path = Path(".data/audio")

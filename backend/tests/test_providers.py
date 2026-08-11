@@ -5,12 +5,19 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import jwt
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from app.config import Settings
 from app.services.deepgram import DeepgramSttGateway
-from app.services.gemini import SYSTEM_INSTRUCTION, MockExtractionGateway
+from app.services.gemini import (
+    SYSTEM_INSTRUCTION,
+    ExtractionError,
+    GeminiExtractionGateway,
+    MockExtractionGateway,
+)
+from app.services.livekit import RealLiveKitGateway
 from app.services.notifications import ApnsVoipPushGateway, IncomingCallPush
 
 
@@ -44,6 +51,26 @@ def test_deepgram_nova3_response_is_normalized() -> None:
     assert result.segments[0].text == "어젯밤에 기침했어"
 
 
+def test_livekit_ogg_egress_uses_track_passthrough() -> None:
+    gateway = RealLiveKitGateway(
+        Settings(
+            mock_external_services=False,
+            livekit_api_key="test-key",
+            livekit_api_secret="test-secret",
+            storage_backend="s3",
+            s3_bucket="audio",
+            s3_access_key_id="access",
+            s3_secret_access_key="secret",
+        )
+    )
+
+    request = gateway._track_egress_request("room", "TR_audio", "calls/1/parent.ogg")
+
+    assert request.track_id == "TR_audio"
+    assert request.file.filepath.endswith("parent.ogg")
+    assert request.file.s3.bucket == "audio"
+
+
 async def test_mock_extractor_does_not_infer_diagnosis() -> None:
     result = await MockExtractionGateway().extract(
         "PARENT: 잠을 못 자서 오늘은 졸려. CHILD: 병 이름을 맞혀봐."
@@ -52,6 +79,76 @@ async def test_mock_extractor_does_not_infer_diagnosis() -> None:
     assert result.symptom is None
     assert "질환명" in SYSTEM_INSTRUCTION
     assert "치료 지시" in SYSTEM_INSTRUCTION
+
+
+async def test_gemini_uses_safe_output_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict = {}
+
+    async def fake_request(client: httpx.AsyncClient, method: str, url: str, **kwargs):
+        del client, method, url
+        captured["body"] = kwargs["json"]
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": json.dumps(
+                                        {
+                                            "symptom": "기침함",
+                                            "medication": None,
+                                            "activity": None,
+                                            "sleep": None,
+                                        }
+                                    )
+                                }
+                            ]
+                        },
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr("app.services.gemini.request_with_retry", fake_request)
+    gateway = GeminiExtractionGateway(
+        Settings(
+            mock_external_services=False,
+            gemini_api_key="test",
+            gemini_max_output_tokens=2048,
+        )
+    )
+
+    result = await gateway.extract("기침했어")
+
+    assert result.symptom == "기침함"
+    assert captured["body"]["generationConfig"]["maxOutputTokens"] == 2048
+
+
+async def test_gemini_reports_truncated_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_request(client: httpx.AsyncClient, method: str, url: str, **kwargs):
+        del client, method, url, kwargs
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "finishReason": "MAX_TOKENS",
+                        "content": {"parts": [{"text": '{"symptom": "'}]},
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr("app.services.gemini.request_with_retry", fake_request)
+    gateway = GeminiExtractionGateway(
+        Settings(mock_external_services=False, gemini_api_key="test")
+    )
+
+    with pytest.raises(ExtractionError, match="finishReason=MAX_TOKENS"):
+        await gateway.extract("기침했어")
 
 
 async def test_apns_voip_request_uses_required_headers_and_minimal_payload() -> None:

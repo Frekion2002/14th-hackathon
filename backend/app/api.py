@@ -635,8 +635,10 @@ async def accept_call(
             session.add(asset)
             await session.flush()
             try:
-                started = await livekit.start_participant_egress(call.room_name, identity, key)
-                asset.egress_id = started.egress_id
+                track_id = await livekit.find_audio_track_id(call.room_name, identity)
+                if track_id:
+                    started = await livekit.start_track_egress(call.room_name, track_id, key)
+                    asset.egress_id = started.egress_id
             except LiveKitError as exc:
                 asset.status = AssetStatus.FAILED.value
                 call.processing_error = str(exc)[:2000]
@@ -695,15 +697,26 @@ async def end_call(
         assets = list(
             await session.scalars(
                 select(AudioAsset).where(
-                    AudioAsset.call_id == call.id, AudioAsset.egress_id.is_not(None)
+                    AudioAsset.call_id == call.id,
+                    AudioAsset.kind.in_(
+                        [
+                            AssetKind.WEBRTC_EGRESS_PARENT.value,
+                            AssetKind.WEBRTC_EGRESS_CHILD.value,
+                        ]
+                    ),
                 )
             )
         )
         for asset in assets:
-            try:
-                await request.app.state.container.livekit.stop_egress(asset.egress_id)
-            except LiveKitError:
-                pass
+            if asset.egress_id:
+                try:
+                    await request.app.state.container.livekit.stop_egress(asset.egress_id)
+                except LiveKitError:
+                    pass
+            elif asset.status == AssetStatus.PENDING.value:
+                # A participant that never published a microphone track must not
+                # leave this call stuck in ENDED forever.
+                asset.status = AssetStatus.FAILED.value
         await session.commit()
     background.add_task(request.app.state.container.pipeline.process, call.id)
     return call_to_dict(call)
@@ -959,6 +972,44 @@ async def livekit_webhook(
     except LiveKitError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc
     event_name = event.get("event")
+    if event_name == "track_published":
+        room = event.get("room") or {}
+        participant = event.get("participant") or {}
+        track = event.get("track") or {}
+        room_name = room.get("name")
+        identity = participant.get("identity")
+        track_id = track.get("sid")
+        track_type = track.get("type")
+        if not room_name or not identity or not track_id:
+            return Response(status_code=204)
+        if track_type not in (None, "AUDIO", "0", 0):
+            return Response(status_code=204)
+        call = await session.scalar(select(CallRecord).where(CallRecord.room_name == room_name))
+        if call is None or not call.recording_enabled or call.state != CallState.ACTIVE.value:
+            return Response(status_code=204)
+        kind = None
+        if identity == call.parent_id:
+            kind = AssetKind.WEBRTC_EGRESS_PARENT.value
+        elif identity == call.child_id:
+            kind = AssetKind.WEBRTC_EGRESS_CHILD.value
+        if kind is None:
+            return Response(status_code=204)
+        asset = await session.scalar(
+            select(AudioAsset).where(AudioAsset.call_id == call.id, AudioAsset.kind == kind)
+        )
+        if asset is None or asset.egress_id or asset.status != AssetStatus.PENDING.value:
+            return Response(status_code=204)
+        try:
+            key = request.app.state.container.storage.object_key(asset.uri)
+            started = await request.app.state.container.livekit.start_track_egress(
+                call.room_name, track_id, key
+            )
+            asset.egress_id = started.egress_id
+        except LiveKitError as exc:
+            asset.status = AssetStatus.FAILED.value
+            call.processing_error = str(exc)[:2000]
+        await session.commit()
+        return Response(status_code=204)
     if event_name != "egress_ended":
         return Response(status_code=204)
     info = event.get("egress_info") or event.get("egressInfo") or {}

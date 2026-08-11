@@ -59,7 +59,7 @@
 | 클라이언트 | Swift 네이티브, iOS 우선 |
 | 수신 통화 | APNs VoIP push → PushKit → CallKit |
 | 미디어 | LiveKit Cloud가 아닌 self-hosted LiveKit Server |
-| 녹음 | LiveKit Participant Egress로 부모/자녀 분리 |
+| 녹음 | LiveKit Track Egress로 부모/자녀 Opus audio track 분리 |
 | 분석용 PCM | LiveKit `LocalAudioTrack.add(audioRenderer:)`의 동일 캡처 스트림 |
 | API | Python 3.12, FastAPI, async SQLAlchemy |
 | DB | 로컬 SQLite, 전체 스택 PostgreSQL |
@@ -74,15 +74,15 @@
 
 | 트랙 | 판정 | 현재 상태 |
 |---|---|---|
-| AI-1 Deepgram STT | 연동 코드 완료, 실서비스 검증 필요 | Nova-3 한국어 요청/응답 정규화와 mock test는 완료. 실제 key와 실제 Egress 음원 E2E는 미검증 |
-| AI-1 LLM 항목 추출(P0-5) | 연동 코드 완료, 실서비스 검증 필요 | Gemini JSON Schema로 증상·복약·활동·수면 추출. 실제 key E2E는 미검증 |
+| AI-1 Deepgram STT | 연동·실호출 검증 완료 | Nova-3 한국어 요청/응답 정규화 완료. 합성 한국어와 실제 Track Egress OGG를 API로 전사해 E2E 성공 |
+| AI-1 LLM 항목 추출(P0-5) | 연동·실호출 검증 완료 | Gemini JSON Schema로 증상·복약·활동·수면 추출. 실제 API E2E 성공, thinking token truncation 방지 적용 |
 | AI-1 되묻는 표현 탐지 | 미구현 | “뭐라고?”, “다시 말해줘”, “잘 안 들려” 등의 사전/정규화/집계 모델과 API 필드가 없음 |
 | AI-2 음향 지표 4종(P0-16) | 미구현 | analyzer port만 있고 4종 모두 `UNMEASURABLE`을 반환 |
 | AI-2 기준선·robust Z(P0-14/P0-6) | 계산 골격 구현, 보정·검증 필요 | median/MAD, anchor/rolling, 동일 time slot, 현재값 제외는 구현. 실제 음향값 E2E test가 없음 |
 | 백엔드 P0 API | prototype 완료 | 인증·초대·동의·통화·LiveKit·리포트·정리 loop 구현. 운영용 SMS/worker/migration/실배포 검증은 별도 |
 
-따라서 “키만 준비되면 전부 완료” 상태가 아니다. 키를 넣으면 AI-1 STT/LLM provider 연동과
-self-hosted 통화 pipeline을 실제로 검증할 수 있지만, 되묻는 표현 탐지와 음향 지표 추출기는
+따라서 “키만 준비되면 전부 완료” 상태는 아니다. 현재 키를 넣은 AI-1 STT/LLM과 self-hosted
+통화 pipeline의 합성 음원 E2E까지는 검증됐다. 그러나 되묻는 표현 탐지와 음향 지표 추출기는
 추가 구현이 필요하다. 음향값이 없으므로 현재 기준선·signal·리포트의 음향 변화 경로도 실제
 데이터로 동작하지 않는다.
 
@@ -92,7 +92,7 @@ self-hosted 통화 pipeline을 실제로 검증할 수 있지만, 되묻는 표�
 - 개발 OTP와 JWT 인증, 부모 초대, 가족 구성원, append-only 동의, 질환 프로필
 - 질환별 오늘의 질문 생성과 최근 질문 중복 회피
 - 통화 생성/수락/거절/종료 state flow와 KST time-slot 태깅
-- self-hosted LiveKit room/token, 부모·자녀 Participant Egress, webhook 서명 검증
+- self-hosted LiveKit room/token, 부모·자녀 Track Egress, webhook 서명 검증
 - S3/MinIO presigned upload와 로컬 signed upload fallback
 - Egress와 분석용 PCM 도착을 모두 기다리는 처리 파이프라인
 - Deepgram Nova-3 한국어 STT adapter와 화자별 segment 정규화
@@ -131,7 +131,9 @@ self-hosted 통화 pipeline을 실제로 검증할 수 있지만, 되묻는 표�
    │ TTS 질문 로컬 재생 │                          │       PushKit→CallKit
    │ join/publish ────────────────────────────────>│                    │
    │                    │<──────── POST /accept ────────────────────────┤
-   │                    ├─ parent token + Egress ─>│                    │
+   │                    ├─ parent token + 기존 child track 조회        │
+   │                    │<─ signed track_published webhook ─────────────┤
+   │                    ├─ per-track OGG Egress ──>│                    │
    │<══════════════════════ WebRTC audio ═══════════════════════════════>│
    │                    │                          │  PCM renderer 기록 │
    │ POST /end ────────>│ stop Egress             │<─ upload PCM ──────┤
@@ -170,7 +172,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 
 | 파일 | 역할 |
 |---|---|
-| `services/livekit.py` | self-host LiveKit room/token/Egress/webhook adapter와 mock |
+| `services/livekit.py` | self-host LiveKit room/token/audio-track 조회/Track Egress/webhook adapter와 mock |
 | `services/notifications.py` | APNs ES256 provider JWT와 HTTP/2 VoIP push, mock/disabled adapter |
 | `services/storage.py` | 로컬/S3 저장, presigned upload/read/delete |
 | `services/deepgram.py` | Nova-3 prerecorded STT 요청과 segment/speech-time 정규화 |
@@ -223,11 +225,31 @@ docker compose config --quiet
 2026-08-11 마지막 검증 결과:
 
 - `uv run ruff check .`: 통과
-- `uv run pytest -q`: 8 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
+- `uv run pytest -q`: 12 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
 - `uv build`: wheel/sdist 생성 성공
 - generated OpenAPI: 27 paths / 28 operations
 - `docker-compose.yml`, `deploy/livekit.yaml`, `deploy/egress.yaml`: YAML parse 통과
-- 현재 작업 머신은 Docker Compose plugin이 없어 실제 stack boot 검증은 하지 못했다.
+- Docker Compose 5.4.0 + Colima arm64에서 Postgres/Redis/MinIO/LiveKit/Egress/backend 전체
+  stack 기동 및 health 확인
+- Deepgram 실제 key: macOS 한국어 합성 WAV를 `nova-3`, `language=ko`로 전사 성공
+- Gemini 실제 key: `gemini-3.6-flash` structured JSON 추출 성공
+- 실제 통합 smoke: LiveKit CLI로 자녀 30.4초/부모 42.4초 Opus track publish → 분리 Track
+  Egress → MinIO → Deepgram(부모 발화 42초, 23 segments) → Gemini(4개 항목 모두 존재) →
+  `ANALYZED` → 원본 3개 asset purge까지 성공
+
+현재 이 Mac에는 Homebrew `docker-compose 5.4.0`, `docker-buildx 0.36.1`,
+`livekit-cli 2.18.2`가 설치되어 있고 `~/.docker/config.json`의 `cliPluginsExtraDirs`가
+`/opt/homebrew/lib/docker/cli-plugins`를 가리킨다. 이는 machine-local 설정이라 Git에는 없다.
+전체 stack은 `backend/`에서 실행 중이다. 상태는 `docker compose ps`, 중지는
+`docker compose down`으로 수행하되 DB/MinIO volume을 보존하려면 `-v`를 붙이지 않는다.
+
+Gemini thinking-capable Flash 모델은 내부 추론 토큰도 output budget을 사용한다. 500으로 두면
+짧은 JSON도 `MAX_TOKENS`로 잘렸기 때문에 기본 `GEMINI_MAX_OUTPUT_TOKENS=2048`을 사용하고,
+`finishReason != STOP` 응답은 불완전 JSON으로 파싱하지 않고 명시적으로 실패시킨다.
+
+화자 분리 OGG는 반드시 Track Egress로 저장한다. Participant Egress는 오디오·비디오
+transcode 경로여서 이 stack에서 OGG와 호환되지 않았다. `/accept`는 이미 publish된 자녀
+microphone track을 조회하고, 이후 부모 track은 `track_published` webhook에서 시작한다.
 
 Swagger는 `http://localhost:8080/docs`, health는 `GET /v1/health`다.
 
@@ -282,13 +304,13 @@ Admin에게 요청한다. 요청 범위는 다음과 같다.
 
 ## 8. 다음 작업 우선순위
 
-1. Deepgram/Gemini key로 실제 Egress 음원의 STT→구조화 추출 E2E를 검증한다.
-2. 되묻는 표현 사전·정규화·집계 schema와 test를 구현한다.
-3. LiveKit renderer PCM sample rate/channel을 실기기에서 측정하고 WAV 변환기를 확정한다.
-4. 음향 4종 중 기침 이벤트와 발화 속도부터 검증된 analyzer로 구현한다.
-5. `4주 연속`을 calendar week 기준으로 수정하고 robust Z/baseline fixture test를 추가한다.
-6. APNs provider를 실제 Apple sandbox/iPhone에서 E2E 검증한다.
-7. Swift Xcode project가 생기면 `docs/ios-call-flow.md` 기준으로 CallCoordinator를 구현한다.
+1. 되묻는 표현 사전·정규화·집계 schema와 test를 구현한다.
+2. LiveKit renderer PCM sample rate/channel을 실기기에서 측정하고 WAV 변환기를 확정한다.
+3. 음향 4종 중 기침 이벤트와 발화 속도부터 검증된 analyzer로 구현한다.
+4. `4주 연속`을 calendar week 기준으로 수정하고 robust Z/baseline fixture test를 추가한다.
+5. APNs provider를 실제 Apple sandbox/iPhone에서 E2E 검증한다.
+6. Swift Xcode project가 생기면 `docs/ios-call-flow.md` 기준으로 CallCoordinator를 구현한다.
+7. 실제 iPhone 양단 통화로 Track Egress 시작 순서와 네트워크 전환을 재검증한다.
 8. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다.
 9. SMS OTP와 일반 APNs 알림 provider를 붙인다.
 
@@ -307,3 +329,8 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-11: 팀원·AI의 pull/read/verify/update/commit/push HANDOFF 운영 규칙 확정.
 - 2026-08-11: Apple Developer Account Holder/Admin에게 요청할 APNs 준비 절차 추가.
 - 2026-08-11: AI-1/AI-2/백엔드 완료 여부를 재감사하고 되묻기·음향·주 단위 signal 누락을 명시.
+- 2026-08-11: Colima에서 self-hosted 7-service stack을 실제 기동하고 Deepgram/Gemini 실호출 검증.
+- 2026-08-11: Gemini 500-token JSON truncation을 발견해 2,048 token 설정과 finishReason 검증 추가.
+- 2026-08-11: Participant Egress+OGG 통합 오류를 발견해 audio Track Egress와
+  `track_published` webhook orchestration으로 교체.
+- 2026-08-11: 두 합성 참가자 통화의 LiveKit→MinIO→Deepgram→Gemini→purge 실제 E2E 성공.

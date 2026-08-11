@@ -214,6 +214,50 @@ def test_complete_call_pipeline(client: TestClient) -> None:
     assert report.json()["analyzedCallCount"] == 1
 
 
+def test_track_published_webhook_starts_late_parent_egress(client: TestClient) -> None:
+    child_token, _, parent_token, parent = onboard_family(client)
+    livekit = client.app.state.container.livekit
+
+    async def no_track_before_publish(room_name: str, identity: str) -> str | None:
+        del room_name, identity
+        return None
+
+    livekit.find_audio_track_id = no_track_before_publish
+    created = client.post(
+        "/v1/calls",
+        headers=auth(child_token),
+        json={"calleeId": parent["id"]},
+    )
+    call_id = created.json()["callId"]
+    accepted = client.post(f"/v1/calls/{call_id}/accept", headers=auth(parent_token))
+    assert accepted.status_code == 200, accepted.text
+
+    published = client.post(
+        "/v1/webhooks/livekit",
+        json={
+            "event": "track_published",
+            "room": {"name": created.json()["roomName"]},
+            "participant": {"identity": parent["id"]},
+            "track": {"sid": "TR_parent_audio", "type": "AUDIO"},
+        },
+    )
+    assert published.status_code == 204, published.text
+
+    async def get_parent_asset() -> AudioAsset | None:
+        database = client.app.state.container.database
+        async with database.sessions() as session:
+            return await session.scalar(
+                select(AudioAsset).where(
+                    AudioAsset.call_id == call_id,
+                    AudioAsset.kind == AssetKind.WEBRTC_EGRESS_PARENT.value,
+                )
+            )
+
+    asset = client.portal.call(get_parent_asset)
+    assert asset is not None
+    assert asset.egress_id is not None
+
+
 def test_openapi_contains_contract_endpoints(client: TestClient) -> None:
     paths = client.get("/openapi.json").json()["paths"]
     required = {

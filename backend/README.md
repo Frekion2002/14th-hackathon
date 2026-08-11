@@ -7,7 +7,7 @@ Gemini 건강 대화 구조화 파이프라인이다.
 
 - 휴대폰 OTP 인증, 부모 초대, append-only 민감정보 동의, 질환 프로필
 - 질환별 오늘의 질문과 통화 시작/수락/거절/종료 API
-- self-hosted LiveKit Server와 Participant Egress 기반 화자별 녹음
+- self-hosted LiveKit Server와 Track Egress 기반 화자별 Opus/OGG 녹음
 - iOS PushKit VoIP 푸시와 CallKit 수신 통화용 APNs provider
 - 부모 기기 분석용 PCM 파일의 presigned upload
 - Deepgram `nova-3`, `language=ko` 사전 녹음 STT
@@ -76,10 +76,11 @@ docker compose up --build
 | MinIO API | `http://localhost:9000` |
 | MinIO console | `http://localhost:9001` |
 
-Egress는 LiveKit과 같은 Redis를 사용하고, 부모와 자녀의 identity를 기준으로 각각 OGG를
-생성한다. Egress는 참여자가 트랙을 publish할 때까지 기다리므로 통화 수락 시 미리 시작해도
-초반 음성이 잘리지 않는다. Egress 완료 웹훅은 LiveKit JWT 서명을 검증한 뒤에만 파일을
-분석 큐에 넣는다.
+Egress는 LiveKit과 같은 Redis를 사용한다. 통화 수락 시 이미 publish된 자녀의 microphone
+track을 조회하고, 수락 뒤 publish되는 부모 track은 서명된 `track_published` 웹훅으로 받아
+각각 Opus/OGG Track Egress를 시작한다. `Participant Egress + OGG`는 비디오 transcode 경로와
+호환되지 않으므로 사용하지 않는다. Egress 완료 웹훅은 LiveKit JWT 서명을 검증한 뒤에만
+파일을 분석 큐에 넣는다.
 
 개발용 LiveKit/MinIO/PostgreSQL 비밀값은 compose 파일에 고정되어 있다. 외부에 노출하는
 배포에서는 `deploy/livekit.yaml`, `deploy/egress.yaml`, compose의 모든 비밀값을 교체하고
@@ -89,7 +90,8 @@ TLS/TURN을 앞단에 구성해야 한다.
 
 1. 자녀가 `POST /calls`를 호출하면 동의 상태를 확인하고 LiveKit 룸과 자녀 토큰을 만든다.
 2. 등록된 iOS VoIP 토큰이 있으면 APNs PushKit 푸시로 CallKit 수신 화면을 연다.
-3. 부모가 `/calls/{id}/accept`하면 부모 토큰을 발급하고 부모/자녀 Egress를 시작한다.
+3. 부모가 `/calls/{id}/accept`하면 부모 토큰과 녹음 asset을 만들고, 이미 publish된 audio
+   track과 이후 `track_published`된 audio track에 각각 Track Egress를 시작한다.
 4. 부모 앱은 LiveKit `LocalAudioTrack.add(audioRenderer:)`에서 동일 캡처 스트림의 PCM을
    파일로 기록한다. 별도 `AVAudioEngine`으로 마이크를 두 번 열지 않는다.
 5. 통화 종료 후 Egress 웹훅과 분석용 PCM 완료 이벤트를 모두 기다린다.
@@ -136,6 +138,7 @@ docker compose config --quiet
 ```
 
 테스트는 초대→동의→질환 프로필→통화→이중 업로드→STT/LLM→폐기→리포트 전체 흐름과
-Deepgram 응답 정규화, APNs VoIP 요청 헤더·payload를 포함한다.
+Deepgram 응답 정규화, Gemini 출력 truncation 방지, LiveKit Track Egress 요청·웹훅,
+APNs VoIP 요청 헤더·payload를 포함한다.
 
 전체 작업 상태와 파일별 역할, 다음 작업은 [`HANDOFF.md`](../HANDOFF.md)를 기준으로 관리한다.

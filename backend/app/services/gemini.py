@@ -60,7 +60,9 @@ class GeminiExtractionGateway(ExtractionGateway):
                 "responseMimeType": "application/json",
                 "responseJsonSchema": schema,
                 "temperature": 0,
-                "maxOutputTokens": 500,
+                # Thinking-capable Gemini models count internal reasoning against this
+                # limit. 500 tokens can therefore truncate even a four-field JSON body.
+                "maxOutputTokens": self.settings.gemini_max_output_tokens,
             },
         }
         url = (
@@ -77,8 +79,16 @@ class GeminiExtractionGateway(ExtractionGateway):
                     json=body,
                 )
                 payload = response.json()
-            text = payload["candidates"][0]["content"]["parts"][0]["text"]
+            candidate = payload["candidates"][0]
+            finish_reason = candidate.get("finishReason")
+            if finish_reason not in (None, "STOP"):
+                raise ExtractionError(
+                    f"Gemini 응답이 완성되지 않았습니다 (finishReason={finish_reason})"
+                )
+            text = candidate["content"]["parts"][0]["text"]
             return ExtractionPayload.model_validate(json.loads(text))
+        except ExtractionError:
+            raise
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
             raise ExtractionError(f"Gemini 구조화 추출 실패: {exc}") from exc
 
