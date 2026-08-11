@@ -262,6 +262,12 @@ LiveKit key/secret은 LiveKit Cloud에서 받지 않는다. 실제 iOS PushKit �
 APNs 자격증명이 추가된다. Gemini 무료 tier에는 제품 개선 데이터 사용 조건이 있으므로 실제
 건강정보가 아닌 더미 데이터만 사용한다.
 
+`JWT_SECRET`은 클라이언트용 값이 아니다. Swift/iOS·프론트엔드 팀원에게 전달하지 않는다.
+하나의 공용 백엔드만 사용하면 그 배포 환경에만 보관한다. 팀원이 각자 독립 로컬 백엔드를
+실행하면 각자 다른 secret을 써도 된다. 같은 도메인에서 여러 backend replica가 동일 로그인
+토큰을 검증해야 할 때만 모든 replica에 같은 secret을 secret manager로 배포한다. 이 값을
+변경하면 이전에 발급한 access/refresh token은 모두 무효화된다.
+
 APNs 작업은 단순 Apple ID 보유자가 아니라 Apple Developer Program 팀의 Account Holder 또는
 Admin에게 요청한다. 요청 범위는 다음과 같다.
 
