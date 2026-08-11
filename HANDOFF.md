@@ -242,6 +242,18 @@ LiveKit key/secret은 LiveKit Cloud에서 받지 않는다. 실제 iOS PushKit �
 APNs 자격증명이 추가된다. Gemini 무료 tier에는 제품 개선 데이터 사용 조건이 있으므로 실제
 건강정보가 아닌 더미 데이터만 사용한다.
 
+APNs 작업은 단순 Apple ID 보유자가 아니라 Apple Developer Program 팀의 Account Holder 또는
+Admin에게 요청한다. 요청 범위는 다음과 같다.
+
+1. 콜록의 explicit Bundle ID를 확정하고 해당 App ID에 Push Notifications capability를 켠다.
+2. 기존 APNs-enabled signing key를 안전하게 재사용하거나, 가능하면 콜록 topic에 제한된 새
+   key를 생성한다.
+3. 서버 담당자에게 Team ID, Key ID, Bundle ID, sandbox/production 환경을 알려준다.
+4. `.p8` 파일은 한 번만 다운로드할 수 있으므로 Git·메신저에 올리지 않고 secret manager 또는
+   안전한 오프라인 경로로 서버에 전달한다.
+5. Swift target도 같은 Team/Bundle ID로 서명하고 Xcode에서 Push Notifications와 필요한
+   background mode를 활성화한다.
+
 ## 8. 다음 작업 우선순위
 
 1. APNs provider unit test를 완료하고 실제 Apple sandbox/iPhone E2E를 검증한다.
@@ -264,3 +276,4 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-11: 공식 저장소를 `Frekion2002/14th-hackathon`으로 전환하고 HANDOFF 관리 시작.
 - 2026-08-11: 외부 발급 키와 self-hosted 내부 secret을 구분한 자격증명 표 추가.
 - 2026-08-11: 팀원·AI의 pull/read/verify/update/commit/push HANDOFF 운영 규칙 확정.
+- 2026-08-11: Apple Developer Account Holder/Admin에게 요청할 APNs 준비 절차 추가.
