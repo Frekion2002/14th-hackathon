@@ -5,6 +5,36 @@
 이 문서는 콜록 개발의 단일 인수인계 기준이다. 구현, 계약, 검증 결과, 미완료 항목이 바뀌면
 코드와 같은 커밋에서 반드시 이 문서를 갱신한다. 비밀키와 실제 건강정보는 기록하지 않는다.
 
+## 0. 팀원·AI 공통 작업 규칙
+
+이 저장소에서 작업하는 사람과 AI는 다른 대화 기록을 전제로 삼지 않는다. `HANDOFF.md`만
+읽어도 지금까지의 결정, 구현, 검증, 한계와 다음 작업을 복원할 수 있어야 한다.
+
+작업 시작:
+
+1. `git status`로 다른 팀원의 미커밋 변경이 없는지 확인한다.
+2. working tree가 깨끗할 때 `git pull --ff-only`로 최신 `main`을 받는다.
+3. 이 문서를 처음부터 끝까지 읽고 관련 코드와 테스트를 확인한다.
+4. 이미 완료된 기능을 다시 만들지 않고, `의도적으로 미완료`와 `다음 작업 우선순위`를 기준으로
+   작업 범위를 정한다.
+
+작업 종료:
+
+1. 변경한 코드의 lint/test/build를 실행한다.
+2. 이 문서의 구현 상태, 파일 역할, 환경변수, 검증 결과, 미완료 항목, 다음 작업, 변경 이력 중
+   영향받은 내용을 갱신한다.
+3. 새 파일을 만들었으면 `파일별 역할` 표에 반드시 추가한다.
+4. API/데이터 흐름/보안 규칙을 바꿨으면 해당 설명과 테스트 결과를 함께 수정한다.
+5. 코드와 `HANDOFF.md`를 같은 커밋에 넣고 push한다. 문서만 뒤늦게 맞추는 상태를 만들지 않는다.
+6. push 전에 `git diff --check`, secret scan, `git status`를 확인한다.
+
+충돌 또는 불명확한 상태:
+
+- 다른 팀원의 미커밋 파일을 삭제·덮어쓰거나 임의로 되돌리지 않는다.
+- 건강 신호의 의미, 개인정보 처리, 외부 API 선택처럼 제품 결정이 필요한 부분은 추측으로
+  확정하지 않고 `의도적으로 미완료`에 조건과 질문을 기록한다.
+- 실제 키, `.p8`, 토큰, 전화번호, 건강정보를 문서·코드·테스트 fixture에 커밋하지 않는다.
+
 ## 1. 우리가 만드는 것
 
 콜록은 자녀와 부모의 일상적인 통화를 self-hosted LiveKit VoIP로 연결하고, 부모의 사전 동의가
@@ -196,6 +226,22 @@ Swagger는 `http://localhost:8080/docs`, health는 `GET /v1/health`다.
 - 비교는 인구집단 진단 cutoff가 아니라 같은 사람·같은 time slot의 이전 기록을 기준으로 한다.
 - Apple `.p8`, Deepgram/Gemini/API/JWT secret은 Git에 넣지 않는다.
 
+### 자격증명 구분
+
+| 자격증명 | 어디서 얻는가 | 해커톤 필요 여부 | 용도 |
+|---|---|---|---|
+| `DEEPGRAM_API_KEY` | Deepgram Console 발급 | 필수 | Nova-3 한국어 STT |
+| `GEMINI_API_KEY` | Google AI Studio 발급 | 필수 | 구조화 LLM. OpenAI key와 동시에 필요하지 않음 |
+| `LIVEKIT_API_KEY/SECRET` | 우리가 직접 강한 난수로 생성 | 필수 | self-hosted room token, server API, Egress, webhook 서명 |
+| `JWT_SECRET` | 우리가 직접 강한 난수로 생성 | 필수 | 콜록 사용자 인증 JWT |
+| APNs `.p8`/Key ID/Team ID/Bundle ID | Apple Developer 발급·확인 | 실기기 백그라운드 수신 시 필수 | PushKit VoIP push |
+| MinIO access key/secret | 우리가 직접 생성 | Egress 녹음 시 필수 | self-hosted S3 호환 오디오 저장 |
+
+최소 foreground 데모에서 외부 업체로부터 받을 것은 Deepgram key와 Gemini key 두 개다.
+LiveKit key/secret은 LiveKit Cloud에서 받지 않는다. 실제 iOS PushKit 수신까지 시연하면 Apple
+APNs 자격증명이 추가된다. Gemini 무료 tier에는 제품 개선 데이터 사용 조건이 있으므로 실제
+건강정보가 아닌 더미 데이터만 사용한다.
+
 ## 8. 다음 작업 우선순위
 
 1. APNs provider unit test를 완료하고 실제 Apple sandbox/iPhone E2E를 검증한다.
@@ -216,3 +262,5 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-11: 클라이언트를 Swift 네이티브 iOS 우선으로 확정.
 - 2026-08-11: APNs VoIP push provider와 PushKit/CallKit/LiveKit 통화 계약 추가.
 - 2026-08-11: 공식 저장소를 `Frekion2002/14th-hackathon`으로 전환하고 HANDOFF 관리 시작.
+- 2026-08-11: 외부 발급 키와 self-hosted 내부 secret을 구분한 자격증명 표 추가.
+- 2026-08-11: 팀원·AI의 pull/read/verify/update/commit/push HANDOFF 운영 규칙 확정.
