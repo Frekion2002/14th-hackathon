@@ -323,6 +323,23 @@ Deepgram key로 콜록 질문의 한국어 TTS를 만들 수 없고 추가 Deepg
 토큰을 검증해야 할 때만 모든 replica에 같은 secret을 secret manager로 배포한다. 이 값을
 변경하면 이전에 발급한 access/refresh token은 모두 무효화된다.
 
+### 팀 공유 기준
+
+`.env` 파일 전체나 비밀값을 Git·메신저로 전달하지 않는다. 팀원 역할별 전달 범위는 다음과
+같다.
+
+| 대상 | 전달할 값 | 전달하지 않을 값 |
+|---|---|---|
+| Swift/iOS 팀 | 공용 Backend base URL. `livekitUrl`과 room `accessToken`은 통화 API 응답으로 받음 | Deepgram/Gemini key, `JWT_SECRET`, `LIVEKIT_API_SECRET`, MinIO secret, APNs `.p8` |
+| 공용 Backend 운영자 | 모든 서버 secret을 배포 환경의 secret manager에 설정 | Swift 소스·Git·팀 포털에 raw secret 노출 금지 |
+| 독립 로컬 Backend 실행자 | 본인 Deepgram/Gemini key 또는 안전하게 전달받은 개발용 key, 본인이 생성한 `JWT_SECRET`; LiveKit/MinIO 값은 자신의 서버 설정과 일치시킴 | 다른 개발자의 개인 `.env` 전체를 복사할 필요 없음 |
+| APNs 담당자 | 비밀이 아닌 Team ID, Key ID, Bundle ID, 환경을 서버 담당자와 공유; `.p8`은 서버 운영자에게만 보안 채널로 전달 | `.p8`을 Git·일반 메신저·팀 전체에 배포 금지 |
+
+LAN 데모에서 팀에 공개해도 되는 값은 `PUBLIC_BASE_URL`, `LIVEKIT_URL`,
+`S3_PUBLIC_ENDPOINT_URL` 같은 접속 주소다. 다만 iOS 앱은 실제로 공용 Backend base URL만
+고정하면 되고, LiveKit URL과 토큰 및 PCM presigned URL은 Backend 응답으로 받는다. TTS는
+iOS 로컬 `AVSpeechSynthesizer`이므로 별도 TTS key가 없다.
+
 APNs 작업은 단순 Apple ID 보유자가 아니라 Apple Developer Program 팀의 Account Holder 또는
 Admin에게 요청한다. 요청 범위는 다음과 같다.
 
