@@ -92,6 +92,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://collog:collog-local-only@postgres:5432/collog
       JWT_SECRET: ${JWT_SECRET:-collog-local-jwt-secret-change-before-production}
       MOCK_EXTERNAL_SERVICES: "false"
+      TEAM_PORTAL_ENABLED: ${TEAM_PORTAL_ENABLED:-true}
+      TEAM_PORTAL_REPOSITORY_URL: ${TEAM_PORTAL_REPOSITORY_URL:-https://github.com/Frekion2002/14th-hackathon}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       LIVEKIT_URL: ${LIVEKIT_URL:-ws://localhost:7880}
       LIVEKIT_INTERNAL_URL: http://livekit:7880

@@ -12,8 +12,10 @@
 
 작업 시작:
 
-1. `git status`로 다른 팀원의 미커밋 변경이 없는지 확인한다.
-2. working tree가 깨끗할 때 `git pull --ff-only`로 최신 `main`을 받는다.
+1. **매 턴 어떤 파일도 읽거나 수정하기 전에** `git status -sb`와 `git fetch origin main`을
+   실행하고 `git rev-list --count HEAD..origin/main`으로 새 push 여부를 확인한다.
+2. 원격이 앞서 있고 working tree가 깨끗하면 `git pull --ff-only`로 최신 `main`을 받는다.
+   미커밋 변경이 있으면 pull/덮어쓰기를 하지 말고 충돌 가능성을 먼저 보고한다.
 3. 이 문서를 처음부터 끝까지 읽고 관련 코드와 테스트를 확인한다.
 4. 이미 완료된 기능을 다시 만들지 않고, `의도적으로 미완료`와 `다음 작업 우선순위`를 기준으로
    작업 범위를 정한다.
@@ -76,8 +78,8 @@
 |---|---|---|
 | AI-1 Deepgram STT | 연동·실호출 검증 완료 | Nova-3 한국어 요청/응답 정규화 완료. 합성 한국어와 실제 Track Egress OGG를 API로 전사해 E2E 성공 |
 | AI-1 LLM 항목 추출(P0-5) | 연동·실호출 검증 완료 | Gemini JSON Schema로 증상·복약·활동·수면 추출. 실제 API E2E 성공, thinking token truncation 방지 적용 |
-| AI-1 되묻는 표현 탐지 | 미구현 | “뭐라고?”, “다시 말해줘”, “잘 안 들려” 등의 사전/정규화/집계 모델과 API 필드가 없음 |
-| AI-2 음향 지표 4종(P0-16) | 미구현 | analyzer port만 있고 4종 모두 `UNMEASURABLE`을 반환 |
+| AI-1 되묻는 표현 탐지 | 설계 완료·미구현 | 부모 utterance 규칙 탐지, 3초 event 병합, 분당 빈도와 API schema를 `ai-transcript-design.md`에 확정 |
+| AI-2 음향 지표 4종(P0-16) | 설계 완료·미구현 | 지표 정의·품질 gate·Silero/pYIN/YAMNet·worker/검증 기준 확정. 현재 analyzer는 계속 `UNMEASURABLE` |
 | AI-2 기준선·robust Z(P0-14/P0-6) | 계산 골격 구현, 보정·검증 필요 | median/MAD, anchor/rolling, 동일 time slot, 현재값 제외는 구현. 실제 음향값 E2E test가 없음 |
 | 백엔드 P0 API | prototype 완료 | 인증·초대·동의·통화·LiveKit·리포트·정리 loop 구현. 운영용 SMS/worker/migration/실배포 검증은 별도 |
 
@@ -102,6 +104,8 @@
 - anchor/rolling baseline, median/MAD robust z, 변화 signal 계산 골격, report snapshot
 - iOS PushKit용 APNs HTTP/2 provider와 `/devices` idempotent 등록
 - PushKit → CallKit → `/accept` → LiveKit iOS 계약 문서
+- `/team` 모바일 웹 포털과 `/team/status.json` 비밀값 없는 연동 상태 endpoint
+- LLM prompt v2·되묻기 detector와 AI-2 음향 지표 4종 구현 설계
 
 ### 의도적으로 미완료
 
@@ -163,6 +167,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/app/api.py` | 28개 REST endpoint와 통화 orchestration |
 | `backend/app/config.py` | 환경변수와 provider 설정 |
 | `backend/app/container.py` | DB/storage/LiveKit/STT/LLM/APNs/pipeline 의존성 조립 |
+| `backend/app/team_portal.py` | 모바일/WebView 팀 포털 HTML과 비밀값 없는 provider 상태 snapshot |
 | `backend/app/database.py` | async engine/session/Base |
 | `backend/app/models.py` | 사용자, 가족, 동의, 통화, 오디오, 추출, 기준선, signal, report DB 모델 |
 | `backend/app/schemas.py` | camelCase API request/response와 Gemini 추출 schema |
@@ -195,6 +200,8 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/Dockerfile` | API container image |
 | `backend/.env.example` | 비밀값 없는 환경변수 template |
 | `backend/docs/ios-call-flow.md` | Swift PushKit/CallKit/LiveKit/PCM 구현 계약 |
+| `backend/docs/ai-transcript-design.md` | LLM 위치/prompt v2/eval과 되묻기 규칙 detector 설계 |
+| `backend/docs/acoustic-design.md` | 음향 4종 정의, 품질 gate, model, worker와 검증 기준 |
 | `backend/tests/test_api_flow.py` | 온보딩부터 분석·폐기·리포트까지 E2E API test |
 | `backend/tests/test_providers.py` | Deepgram/Gemini/APNs provider unit test |
 | `backend/tests/conftest.py` | 격리 SQLite와 mock provider test app fixture |
@@ -225,7 +232,7 @@ docker compose config --quiet
 2026-08-11 마지막 검증 결과:
 
 - `uv run ruff check .`: 통과
-- `uv run pytest -q`: 12 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
+- `uv run pytest -q`: 13 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
 - `uv build`: wheel/sdist 생성 성공
 - generated OpenAPI: 27 paths / 28 operations
 - `docker-compose.yml`, `deploy/livekit.yaml`, `deploy/egress.yaml`: YAML parse 통과
@@ -236,6 +243,8 @@ docker compose config --quiet
 - 실제 통합 smoke: LiveKit CLI로 자녀 30.4초/부모 42.4초 Opus track publish → 분리 Track
   Egress → MinIO → Deepgram(부모 발화 42초, 23 segments) → Gemini(4개 항목 모두 존재) →
   `ANALYZED` → 원본 3개 asset purge까지 성공
+- `/team` Docker HTML 렌더와 `/team/status.json`을 localhost 및 LAN 주소에서 확인. 실제 key는
+  노출하지 않고 provider별 configured boolean만 반환
 
 현재 이 Mac에는 Homebrew `docker-compose 5.4.0`, `docker-buildx 0.36.1`,
 `livekit-cli 2.18.2`가 설치되어 있고 `~/.docker/config.json`의 `cliPluginsExtraDirs`가
@@ -252,6 +261,10 @@ transcode 경로여서 이 stack에서 OGG와 호환되지 않았다. `/accept`�
 microphone track을 조회하고, 이후 부모 track은 `track_published` webhook에서 시작한다.
 
 Swagger는 `http://localhost:8080/docs`, health는 `GET /v1/health`다.
+팀 포털은 `http://<backend-host>:8080/team`, machine-readable 상태는
+`GET /team/status.json`이다. Swift에서는 같은 URL을 `WKWebView` 최상위 navigation으로 열 수
+있다. 포털은 키 값이 아닌 configured boolean만 표시하지만, 인터넷에 직접 노출하는 production
+환경에서는 `TEAM_PORTAL_ENABLED=false`로 끄거나 인증/TLS 앞단을 둔다.
 
 전체 스택은 `.env`에 Deepgram/Gemini 키와 iPhone에서 접근 가능한 LAN 주소를 넣은 뒤
 `docker compose up --build`로 시작한다. APNs는 선택 사항이며 `.p8`를 절대 커밋하지 않는다.
@@ -304,15 +317,21 @@ Admin에게 요청한다. 요청 범위는 다음과 같다.
 
 ## 8. 다음 작업 우선순위
 
-1. 되묻는 표현 사전·정규화·집계 schema와 test를 구현한다.
-2. LiveKit renderer PCM sample rate/channel을 실기기에서 측정하고 WAV 변환기를 확정한다.
-3. 음향 4종 중 기침 이벤트와 발화 속도부터 검증된 analyzer로 구현한다.
-4. `4주 연속`을 calendar week 기준으로 수정하고 robust Z/baseline fixture test를 추가한다.
-5. APNs provider를 실제 Apple sandbox/iPhone에서 E2E 검증한다.
-6. Swift Xcode project가 생기면 `docs/ios-call-flow.md` 기준으로 CallCoordinator를 구현한다.
-7. 실제 iPhone 양단 통화로 Track Egress 시작 순서와 네트워크 전환을 재검증한다.
+1. `ai-transcript-design.md`의 parent-only prompt v2와 semantic eval fixture를 구현한다.
+2. 되묻는 표현 사전·정규화·event 병합·집계 schema와 test를 구현한다.
+3. Deepgram word timing 보존과 AI-2 canonical waveform/quality gate를 구현한다.
+4. Silero VAD 기반 발화 속도·휴지 비율, pYIN F0 variation, YAMNet cough 순으로 구현한다.
+5. `4주 연속`을 calendar week 기준으로 수정하고 robust Z/baseline fixture test를 추가한다.
+6. Swift Xcode project에서 `ios-call-flow.md` 기준 CallCoordinator/PCM writer/로컬 TTS를 구현한다.
+7. APNs provider를 Apple sandbox에서 검증하고 실제 iPhone 양단 통화로 Track Egress와
+   네트워크 전환까지 E2E 검증한다.
 8. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다.
 9. SMS OTP와 일반 APNs 알림 provider를 붙인다.
+
+해커톤 핵심 demo 완료 기준은 1~7이다. 따라서 현재 상태에서 APNs/iPhone 검증만 하면 끝나는
+것은 아니다. 되묻기 detector, 실제 AI-2 analyzer, calendar-week 기준선, Swift 통화/PCM/TTS가
+먼저 또는 병렬로 완료되어야 한다. 8~9와 DB migration/TLS/secret manager는 production 전환
+작업이며 해커톤 시연의 필수 범위와 분리한다.
 
 다음 AI는 구현 전에 반드시 이 문서와 `backend/README.md`, 관련 service/test를 먼저 읽는다.
 API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, 판단 불가능한 건강 지표를 임의의
@@ -334,3 +353,6 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-11: Participant Egress+OGG 통합 오류를 발견해 audio Track Egress와
   `track_published` webhook orchestration으로 교체.
 - 2026-08-11: 두 합성 참가자 통화의 LiveKit→MinIO→Deepgram→Gemini→purge 실제 E2E 성공.
+- 2026-08-11: 매 턴 시작 전 `fetch`/원격 commit 비교를 강제하는 협업 규칙 추가.
+- 2026-08-11: `/team` WebView 대응 팀 포털과 비밀값 없는 `/team/status.json` 추가.
+- 2026-08-11: LLM prompt/eval·되묻기 규칙 detector와 AI-2 4종 음향 지표 설계 확정.

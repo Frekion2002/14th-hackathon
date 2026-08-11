@@ -14,6 +14,7 @@ Gemini 건강 대화 구조화 파이프라인이다.
 - Gemini JSON Schema 기반 증상·복약·활동·수면 추출
 - 부모 발화 20초 미만 제외, 오디오 분석 직후 폐기, 실패 파일 24시간 내 폐기
 - 앵커/롤링 기준선, MAD robust z, 변화 신호, immutable 리포트 스냅샷 API
+- 모바일 브라우저와 Swift `WKWebView`에서 여는 팀 상태 포털
 
 음향 지표 4종은 API와 파이프라인 경계까지 연결되어 있지만 아직 검증된 분석기가 선택되지
 않았다. 임의의 숫자로 개인 기준선을 오염시키지 않도록 현재는 네 지표 모두 명시적인
@@ -31,6 +32,8 @@ uv run uvicorn app.main:app --reload --port 8080
 
 - Swagger UI: <http://localhost:8080/docs>
 - 상태 확인: <http://localhost:8080/v1/health>
+- 팀 포털: <http://localhost:8080/team>
+- 팀 상태 JSON: <http://localhost:8080/team/status.json>
 - SQLite와 업로드 파일: `.data/`
 
 `MOCK_EXTERNAL_SERVICES=true`에서는 LiveKit, Deepgram, Gemini 호출이 모의 구현으로
@@ -142,3 +145,5 @@ Deepgram 응답 정규화, Gemini 출력 truncation 방지, LiveKit Track Egress
 APNs VoIP 요청 헤더·payload를 포함한다.
 
 전체 작업 상태와 파일별 역할, 다음 작업은 [`HANDOFF.md`](../HANDOFF.md)를 기준으로 관리한다.
+AI-1 prompt/되묻기 설계는 [`docs/ai-transcript-design.md`](docs/ai-transcript-design.md), 실제
+음향 지표 설계는 [`docs/acoustic-design.md`](docs/acoustic-design.md)를 기준으로 구현한다.

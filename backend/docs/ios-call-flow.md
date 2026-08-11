@@ -147,6 +147,40 @@ PCM으로 정의한다. 파일은 mono 48 kHz PCM WAV로 정규화한다.
 업로드가 실패하면 재시도 가능한 앱 전용 임시 영역에만 짧게 보관하고, 완료 또는 만료 시 즉시
 삭제한다. 서버도 분석 완료 후 원본을 폐기한다.
 
+## 팀 포털 WebView (개발 빌드 전용)
+
+백엔드의 `/team`은 모바일 대응 HTML이므로 별도 화면 구현 없이 `WKWebView`로 열 수 있다.
+고객용 건강 리포트 화면이 아니라 팀 통합 상태를 보는 개발 도구이므로 Debug build에서만
+노출한다.
+
+```swift
+import SwiftUI
+import WebKit
+
+struct TeamHubWebView: UIViewRepresentable {
+    let backendBaseURL: URL
+
+    func makeUIView(context: Context) -> WKWebView {
+        let view = WKWebView(frame: .zero)
+        view.allowsBackForwardNavigationGestures = true
+        return view
+    }
+
+    func updateUIView(_ view: WKWebView, context: Context) {
+        let teamURL = backendBaseURL.appending(path: "team")
+        if view.url != teamURL {
+            view.load(URLRequest(url: teamURL, cachePolicy: .reloadIgnoringLocalCacheData))
+        }
+    }
+}
+```
+
+같은 Wi-Fi의 개발 PC를 직접 열 때에는 `http://<개발-PC-LAN-IP>:8080`을 사용한다.
+Info.plist에는 광범위한 `NSAllowsArbitraryLoads` 대신 개발 target에만
+`NSLocalNetworkUsageDescription`과 필요한 local-network 예외를 둔다. 외부 공유나 TestFlight는
+TLS가 적용된 backend URL을 사용하고 production config에서는 `TEAM_PORTAL_ENABLED=false`로
+설정한다.
+
 ## 아직 실기기에서 검증할 것
 
 - PushKit background launch → CallKit 보고 시간

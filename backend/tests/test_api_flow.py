@@ -269,3 +269,20 @@ def test_openapi_contains_contract_endpoints(client: TestClient) -> None:
         "/v1/webhooks/livekit",
     }
     assert required.issubset(paths)
+
+
+def test_team_portal_is_mobile_ready_and_never_exposes_secrets(client: TestClient) -> None:
+    page = client.get("/team")
+    assert page.status_code == 200
+    assert "Collog Team Hub" in page.text
+    assert 'name="viewport"' in page.text
+    assert "test-secret-with-more-than-thirty-two-characters" not in page.text
+    assert page.headers["cache-control"] == "no-store"
+
+    status = client.get("/team/status.json")
+    assert status.status_code == 200
+    payload = status.json()
+    assert payload["status"] == "ok"
+    assert payload["providers"]["livekit"]["mode"] == "self-hosted"
+    assert "apiKey" not in status.text
+    assert "secret" not in status.text.lower()

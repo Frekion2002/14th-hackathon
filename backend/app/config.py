@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     promoted_consecutive_weeks: int = 4
 
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    team_portal_enabled: bool = True
+    team_portal_repository_url: str = "https://github.com/Frekion2002/14th-hackathon"
 
     @property
     def livekit_http_url(self) -> str:

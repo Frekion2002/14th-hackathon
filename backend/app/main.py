@@ -7,11 +7,12 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.api import router
 from app.config import Settings, get_settings
 from app.container import AppContainer
+from app.team_portal import build_team_status, render_team_portal
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -55,6 +56,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(router, prefix=settings.api_prefix)
+
+    @app.get("/team", include_in_schema=False, response_class=HTMLResponse)
+    async def team_portal(request: Request) -> HTMLResponse:
+        portal_settings = request.app.state.container.settings
+        if not portal_settings.team_portal_enabled:
+            raise HTTPException(status_code=404, detail="팀 포털이 비활성화되어 있습니다")
+        return HTMLResponse(
+            render_team_portal(portal_settings),
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": (
+                    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; "
+                    "base-uri 'none'; form-action 'none'"
+                ),
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.get("/team/status.json", include_in_schema=False)
+    async def team_portal_status(request: Request) -> dict:
+        portal_settings = request.app.state.container.settings
+        if not portal_settings.team_portal_enabled:
+            raise HTTPException(status_code=404, detail="팀 포털이 비활성화되어 있습니다")
+        return build_team_status(portal_settings)
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
