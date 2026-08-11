@@ -70,6 +70,22 @@
 
 ## 3. 현재 구현 상태
 
+### 기능 트랙별 판정
+
+| 트랙 | 판정 | 현재 상태 |
+|---|---|---|
+| AI-1 Deepgram STT | 연동 코드 완료, 실서비스 검증 필요 | Nova-3 한국어 요청/응답 정규화와 mock test는 완료. 실제 key와 실제 Egress 음원 E2E는 미검증 |
+| AI-1 LLM 항목 추출(P0-5) | 연동 코드 완료, 실서비스 검증 필요 | Gemini JSON Schema로 증상·복약·활동·수면 추출. 실제 key E2E는 미검증 |
+| AI-1 되묻는 표현 탐지 | 미구현 | “뭐라고?”, “다시 말해줘”, “잘 안 들려” 등의 사전/정규화/집계 모델과 API 필드가 없음 |
+| AI-2 음향 지표 4종(P0-16) | 미구현 | analyzer port만 있고 4종 모두 `UNMEASURABLE`을 반환 |
+| AI-2 기준선·robust Z(P0-14/P0-6) | 계산 골격 구현, 보정·검증 필요 | median/MAD, anchor/rolling, 동일 time slot, 현재값 제외는 구현. 실제 음향값 E2E test가 없음 |
+| 백엔드 P0 API | prototype 완료 | 인증·초대·동의·통화·LiveKit·리포트·정리 loop 구현. 운영용 SMS/worker/migration/실배포 검증은 별도 |
+
+따라서 “키만 준비되면 전부 완료” 상태가 아니다. 키를 넣으면 AI-1 STT/LLM provider 연동과
+self-hosted 통화 pipeline을 실제로 검증할 수 있지만, 되묻는 표현 탐지와 음향 지표 추출기는
+추가 구현이 필요하다. 음향값이 없으므로 현재 기준선·signal·리포트의 음향 변화 경로도 실제
+데이터로 동작하지 않는다.
+
 ### 완료
 
 - 원본 명세의 27 paths / 28 operations API 계약
@@ -83,7 +99,7 @@
 - Gemini JSON Schema 추출과 진단/치료 추론 방지 시스템 지시
 - 부모 발화 20초 미만 분석 제외
 - 성공/제외/실패 모두 원본 오디오 즉시 폐기, 실패 잔존 파일 24시간 purge
-- anchor/rolling baseline, median/MAD robust z, 연속 변화 signal, report snapshot
+- anchor/rolling baseline, median/MAD robust z, 변화 signal 계산 골격, report snapshot
 - iOS PushKit용 APNs HTTP/2 provider와 `/devices` idempotent 등록
 - PushKit → CallKit → `/accept` → LiveKit iOS 계약 문서
 
@@ -91,6 +107,10 @@
 
 - 음향 분석기의 실제 알고리즘. 현재 4종 지표를 가짜 수치로 채우지 않고
   `UNMEASURABLE / EXTRACTION_ERROR`로 저장한다.
+- 전사 결과의 되묻는 표현 사전 탐지·정규화·통화별 집계.
+- `4주 연속` 판정은 현재 서로 다른 calendar week가 아니라 같은 방향의 이전 signal 횟수를
+  누적한다. 주 단위 중복 제거와 결측 주 처리 규칙을 확정하고 수정해야 한다.
+- robust Z와 anchor/rolling 계산의 실제 음향 fixture 단위/E2E test.
 - SMS OTP 실제 발송 provider. 개발 OTP는 `000000`이다.
 - 질문 TTS asset 생성. 현재 `ttsAssetUrl`은 `null`이고 iOS 로컬 TTS fallback이 필요하다.
 - APNs 실기기 E2E. provider 코드는 구현했지만 Apple 계정 식별자와 `.p8`, 실제 iPhone으로
@@ -256,12 +276,15 @@ Admin에게 요청한다. 요청 범위는 다음과 같다.
 
 ## 8. 다음 작업 우선순위
 
-1. APNs provider unit test를 완료하고 실제 Apple sandbox/iPhone E2E를 검증한다.
-2. Swift Xcode project가 생기면 `docs/ios-call-flow.md` 기준으로 CallCoordinator를 구현한다.
+1. Deepgram/Gemini key로 실제 Egress 음원의 STT→구조화 추출 E2E를 검증한다.
+2. 되묻는 표현 사전·정규화·집계 schema와 test를 구현한다.
 3. LiveKit renderer PCM sample rate/channel을 실기기에서 측정하고 WAV 변환기를 확정한다.
 4. 음향 4종 중 기침 이벤트와 발화 속도부터 검증된 analyzer로 구현한다.
-5. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다.
-6. SMS OTP와 일반 APNs 알림 provider를 붙인다.
+5. `4주 연속`을 calendar week 기준으로 수정하고 robust Z/baseline fixture test를 추가한다.
+6. APNs provider를 실제 Apple sandbox/iPhone에서 E2E 검증한다.
+7. Swift Xcode project가 생기면 `docs/ios-call-flow.md` 기준으로 CallCoordinator를 구현한다.
+8. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다.
+9. SMS OTP와 일반 APNs 알림 provider를 붙인다.
 
 다음 AI는 구현 전에 반드시 이 문서와 `backend/README.md`, 관련 service/test를 먼저 읽는다.
 API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, 판단 불가능한 건강 지표를 임의의
@@ -277,3 +300,4 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-11: 외부 발급 키와 self-hosted 내부 secret을 구분한 자격증명 표 추가.
 - 2026-08-11: 팀원·AI의 pull/read/verify/update/commit/push HANDOFF 운영 규칙 확정.
 - 2026-08-11: Apple Developer Account Holder/Admin에게 요청할 APNs 준비 절차 추가.
+- 2026-08-11: AI-1/AI-2/백엔드 완료 여부를 재감사하고 되묻기·음향·주 단위 signal 누락을 명시.
