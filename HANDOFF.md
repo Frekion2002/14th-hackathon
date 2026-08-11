@@ -364,6 +364,12 @@ S3_PUBLIC_ENDPOINT_URL=http://<HOST>:9000
 `<HOST>`는 `localhost`, 같은 Wi-Fi의 실제 iPhone이면 해당 Mac의 LAN IP다. 독립 로컬 DB를
 쓰므로 `JWT_SECRET`은 같아도 되고 달라도 실행에는 문제가 없다.
 
+이 저장소는 public이므로 실제 key가 든 `.env`를 커밋해서 `pull`만으로 provider 호출까지
+동작하게 만들면 안 된다. 실제 API를 쓰는 로컬 실행은 `.env`를 저장소 밖에서 한 번 별도
+전달하거나, 모든 팀원이 하나의 공용 Backend를 사용해야 한다. GitHub Actions secret은 CI에는
+주입할 수 있지만 팀원의 로컬 `git pull`에는 전달되지 않는다. key를 실수로 public commit에
+넣었다면 파일을 나중에 삭제하는 것만으로는 부족하며 해당 key를 즉시 폐기·재발급한다.
+
 현재 Docker Compose와 `deploy/` 설정에는 서로 일치하는 개발용 LiveKit key/secret, MinIO
 access key/secret, PostgreSQL 계정, Redis 설정이 이미 포함되어 있다. 따라서 저장소 그대로
 실행하는 팀원에게 이 값들을 `.env`로 또 전달할 필요는 없다. 개발용 기본값을 변경할 때에만
