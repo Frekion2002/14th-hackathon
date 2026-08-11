@@ -340,6 +340,39 @@ LAN 데모에서 팀에 공개해도 되는 값은 `PUBLIC_BASE_URL`, `LIVEKIT_U
 고정하면 되고, LiveKit URL과 토큰 및 PCM presigned URL은 Backend 응답으로 받는다. TTS는
 iOS 로컬 `AVSpeechSynthesizer`이므로 별도 TTS key가 없다.
 
+#### pull 후 팀원 PC에서 전체 스택을 실행하는 최소 `.env`
+
+팀원이 `backend/`에서 `docker compose up --build`를 실행해 실제 STT/LLM까지 재현하려면
+저장소에 포함되지 않은 아래 값을 전달해야 한다.
+
+```dotenv
+DEEPGRAM_API_KEY=<팀 개발용 실제 값>
+GEMINI_API_KEY=<팀 개발용 실제 값>
+JWT_SECRET=<팀 공용 값 또는 각자 생성한 32자 이상 값>
+MOCK_EXTERNAL_SERVICES=false
+GEMINI_MODEL=gemini-3.6-flash
+DEEPGRAM_MODEL=nova-3
+
+# Mac 자체에서만 호출하면 localhost, 실제 iPhone이면 각 팀원 Mac의 LAN IP로 변경
+PUBLIC_BASE_URL=http://<HOST>:8080
+LIVEKIT_URL=ws://<HOST>:7880
+S3_PUBLIC_ENDPOINT_URL=http://<HOST>:9000
+```
+
+팀원에게 가장 단순하게 전달하는 방법은 위 내용이 들어간 `backend/.env`를 별도로 전달하고,
+각 팀원이 `<HOST>` 세 곳만 자기 환경에 맞게 바꾸는 것이다. Mac/Simulator만 사용하면
+`<HOST>`는 `localhost`, 같은 Wi-Fi의 실제 iPhone이면 해당 Mac의 LAN IP다. 독립 로컬 DB를
+쓰므로 `JWT_SECRET`은 같아도 되고 달라도 실행에는 문제가 없다.
+
+현재 Docker Compose와 `deploy/` 설정에는 서로 일치하는 개발용 LiveKit key/secret, MinIO
+access key/secret, PostgreSQL 계정, Redis 설정이 이미 포함되어 있다. 따라서 저장소 그대로
+실행하는 팀원에게 이 값들을 `.env`로 또 전달할 필요는 없다. 개발용 기본값을 변경할 때에만
+`docker-compose.yml`, `deploy/livekit.yaml`, `deploy/egress.yaml`의 값을 모두 함께 맞춘다.
+
+APNs 없이도 foreground 통화와 STT/LLM/음향 파이프라인은 실행된다. 실제 iPhone이 앱 종료·
+백그라운드 상태에서도 전화를 받게 하려면 그때 추가로 `APNS_VOIP_ENABLED=true`, Team ID,
+Key ID, Bundle ID, environment, `.p8` 파일 경로를 설정하고 실제 `.p8` 파일도 전달해야 한다.
+
 APNs 작업은 단순 Apple ID 보유자가 아니라 Apple Developer Program 팀의 Account Holder 또는
 Admin에게 요청한다. 요청 범위는 다음과 같다.
 
