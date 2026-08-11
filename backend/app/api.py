@@ -1,0 +1,984 @@
+from __future__ import annotations
+
+import logging
+import random
+import string
+from datetime import UTC, date, datetime, timedelta
+from typing import Annotated, Literal
+from zoneinfo import ZoneInfo
+
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Header,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    Response,
+    status,
+)
+from sqlalchemy import func, select
+
+from app.config import Settings
+from app.models import (
+    AcousticFeature,
+    AssetKind,
+    AssetStatus,
+    AudioAsset,
+    Baseline,
+    CallRecord,
+    CallState,
+    ChangeSignal,
+    ConsentDecision,
+    ConsentRecord,
+    Device,
+    Family,
+    FamilyMember,
+    HealthExtraction,
+    Invitation,
+    OtpChallenge,
+    ParentProfile,
+    TimeSlot,
+    Transcript,
+    User,
+    UserRole,
+)
+from app.schemas import (
+    AudioConstraints,
+    CallAccepted,
+    CallCreate,
+    CallCreated,
+    ConsentSubmit,
+    DeviceCreate,
+    InvitationAccept,
+    InvitationCreate,
+    OtpRequest,
+    OtpVerify,
+    ProfilePut,
+    RawAudioComplete,
+    RawAudioUploadRequest,
+)
+from app.security import CurrentUser, SessionDep, issue_token, otp_hash, require_role
+from app.services.domain import (
+    derived_member_status,
+    ensure_child_can_access_parent,
+    ensure_report_access,
+    family_for_child,
+    has_consent,
+    latest_consent,
+    latest_invitation,
+)
+from app.services.livekit import LiveKitError
+from app.services.notifications import IncomingCallPush, PushNotificationError
+from app.services.questions import daily_questions
+from app.services.signals import baseline_to_dict, signal_to_dict
+from app.services.storage import LocalStorage
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
+
+CONSENT_ITEMS = [
+    "SENSITIVE_HEALTH_COLLECTION",
+    "VOICE_FEATURE_EXTRACTION",
+    "CALL_RECORDING",
+    "REPORT_SHARING_WITH_CHILD",
+]
+
+
+def settings_from(request: Request) -> Settings:
+    return request.app.state.container.settings
+
+
+def aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def call_to_dict(call: CallRecord) -> dict:
+    return {
+        "callId": call.id,
+        "parentId": call.parent_id,
+        "childId": call.child_id,
+        "state": call.state,
+        "timeSlot": call.time_slot,
+        "startedAt": call.started_at,
+        "endedAt": call.ended_at,
+        "durationSec": call.duration_sec,
+        "recorded": call.recording_enabled,
+        "parentSpeechSec": call.parent_speech_sec,
+        "askedQuestionIds": call.asked_question_ids,
+        "rawAudioPurgedAt": call.raw_audio_purged_at,
+    }
+
+
+async def ensure_call_access(session: SessionDep, user: User, call: CallRecord) -> None:
+    if user.id not in {call.parent_id, call.child_id}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "통화 접근 권한이 없습니다")
+
+
+async def recent_question_exclusions(session: SessionDep, parent_id: str) -> set[str]:
+    calls = (
+        await session.scalars(
+            select(CallRecord)
+            .where(CallRecord.parent_id == parent_id)
+            .order_by(CallRecord.started_at.desc())
+            .limit(3)
+        )
+    ).all()
+    return {question_id for call in calls for question_id in call.asked_question_ids}
+
+
+async def questions_for_parent(request: Request, session: SessionDep, parent_id: str):
+    profile = await session.get(ParentProfile, parent_id)
+    conditions = profile.conditions if profile else []
+    excluded = await recent_question_exclusions(session, parent_id)
+    return daily_questions(settings_from(request), conditions, excluded, parent_id)
+
+
+async def deliver_incoming_call_push(
+    gateway,
+    voip_token: str,
+    push: IncomingCallPush,
+) -> None:
+    try:
+        await gateway.send_incoming_call(voip_token, push)
+    except PushNotificationError as exc:
+        # POST /calls already created a valid LiveKit call. Push delivery is best-effort
+        # because the original API also permits foreground-only demo signaling.
+        logger.warning("incoming VoIP push failed for call %s: %s", push.call_id, exc)
+
+
+# Auth
+@router.post("/auth/otp/request", status_code=202, tags=["Auth"])
+async def request_otp(payload: OtpRequest, request: Request, session: SessionDep) -> dict:
+    settings = settings_from(request)
+    recent_count = await session.scalar(
+        select(func.count(OtpChallenge.id)).where(
+            OtpChallenge.phone == payload.phone,
+            OtpChallenge.created_at >= datetime.now(UTC) - timedelta(minutes=10),
+        )
+    )
+    if (recent_count or 0) >= 5:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "잠시 후 다시 요청해주세요")
+    code = (
+        settings.dev_otp_code
+        if settings.app_env != "production"
+        else "".join(random.choices(string.digits, k=6))
+    )
+    session.add(
+        OtpChallenge(
+            phone=payload.phone,
+            code_hash=otp_hash(payload.phone, code, settings.jwt_secret),
+            requested_role=str(payload.role),
+            requested_name=payload.name,
+            expires_at=datetime.now(UTC) + timedelta(seconds=settings.otp_ttl_seconds),
+        )
+    )
+    await session.commit()
+    result = {"expiresIn": settings.otp_ttl_seconds}
+    if settings.app_env != "production":
+        result["devCode"] = code
+    return result
+
+
+@router.post("/auth/otp/verify", tags=["Auth"])
+async def verify_otp(payload: OtpVerify, request: Request, session: SessionDep) -> dict:
+    settings = settings_from(request)
+    challenge = await session.scalar(
+        select(OtpChallenge)
+        .where(OtpChallenge.phone == payload.phone, OtpChallenge.verified_at.is_(None))
+        .order_by(OtpChallenge.created_at.desc())
+        .limit(1)
+    )
+    if challenge is None or aware(challenge.expires_at) < datetime.now(UTC):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "인증번호가 만료되었거나 없습니다")
+    challenge.attempts += 1
+    if challenge.code_hash != otp_hash(payload.phone, payload.code, settings.jwt_secret):
+        await session.commit()
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "인증번호가 올바르지 않습니다")
+    challenge.verified_at = datetime.now(UTC)
+    user = await session.scalar(select(User).where(User.phone == payload.phone))
+    if user is None:
+        user = User(
+            phone=payload.phone,
+            role=challenge.requested_role,
+            name=challenge.requested_name,
+        )
+        session.add(user)
+        await session.flush()
+    family = await family_for_child(session, user.id) if user.role == UserRole.CHILD.value else None
+    if user.role == UserRole.CHILD.value and family is None:
+        family = Family(created_by=user.id)
+        session.add(family)
+        await session.flush()
+    await session.commit()
+    return {
+        "accessToken": issue_token(user, settings),
+        "refreshToken": issue_token(user, settings, refresh=True),
+        "user": {
+            "id": user.id,
+            "role": user.role,
+            "name": user.name,
+            "phone": user.phone,
+            "familyId": family.id if family else None,
+        },
+    }
+
+
+@router.post("/devices", status_code=201, tags=["Auth"])
+async def create_device(payload: DeviceCreate, user: CurrentUser, session: SessionDep) -> dict:
+    # Re-registration should be idempotent. A PushKit token belongs to an app
+    # installation, so logging into another account transfers that installation.
+    device = None
+    if payload.voip_token:
+        device = await session.scalar(
+            select(Device).where(
+                Device.platform == payload.platform,
+                Device.voip_token == payload.voip_token,
+            )
+        )
+    if device is None:
+        device = await session.scalar(
+            select(Device).where(
+                Device.user_id == user.id,
+                Device.platform == payload.platform,
+                Device.token == payload.token,
+            )
+        )
+    if device is None:
+        device = Device(
+            user_id=user.id,
+            platform=payload.platform,
+            token=payload.token,
+            voip_token=payload.voip_token,
+        )
+        session.add(device)
+    else:
+        device.user_id = user.id
+        device.token = payload.token
+        device.voip_token = payload.voip_token
+        device.created_at = datetime.now(UTC)
+    await session.commit()
+    return {"deviceId": device.id}
+
+
+# Family
+@router.post("/families/{familyId}/invitations", status_code=201, tags=["Family"])
+async def create_invitation(
+    family_id: Annotated[str, Path(alias="familyId")],
+    payload: InvitationCreate,
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    require_role(user, UserRole.CHILD)
+    family = await family_for_child(session, user.id)
+    if family is None or family.id != family_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "가족 접근 권한이 없습니다")
+    member = FamilyMember(
+        family_id=family.id,
+        name=payload.name,
+        relation=payload.relation,
+        invited_at=datetime.now(UTC),
+    )
+    session.add(member)
+    await session.flush()
+    code = await unique_invitation_code(session)
+    invitation = Invitation(
+        member_id=member.id,
+        code=code,
+        expires_at=datetime.now(UTC) + timedelta(hours=24),
+    )
+    session.add(invitation)
+    await session.commit()
+    return invitation_dict(invitation)
+
+
+async def unique_invitation_code(session: SessionDep) -> str:
+    for _ in range(20):
+        code = "".join(random.choices(string.digits, k=6))
+        if await session.scalar(select(Invitation.id).where(Invitation.code == code)) is None:
+            return code
+    raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "초대 코드를 만들지 못했습니다")
+
+
+def invitation_dict(invitation: Invitation) -> dict:
+    status_value = (
+        "ACCEPTED"
+        if invitation.accepted_at
+        else ("EXPIRED" if aware(invitation.expires_at) <= datetime.now(UTC) else "PENDING")
+    )
+    return {
+        "invitationId": invitation.id,
+        "code": invitation.code,
+        "shareText": f"콜록 가족 초대 코드 {invitation.code}를 앱에 입력해주세요.",
+        "expiresAt": invitation.expires_at,
+        "status": status_value,
+    }
+
+
+@router.get("/families/{familyId}/members", tags=["Family"])
+async def get_members(
+    family_id: Annotated[str, Path(alias="familyId")],
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    require_role(user, UserRole.CHILD)
+    family = await family_for_child(session, user.id)
+    if family is None or family.id != family_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "가족 접근 권한이 없습니다")
+    members = list(
+        await session.scalars(select(FamilyMember).where(FamilyMember.family_id == family_id))
+    )
+    output = []
+    for member in members:
+        invitation = await latest_invitation(session, member.id)
+        member_status = await derived_member_status(session, member, invitation)
+        output.append(
+            {
+                "memberId": member.id,
+                "userId": member.user_id,
+                "name": member.name,
+                "relation": member.relation,
+                "status": member_status,
+                "canRegisterConditions": member_status == "CONSENT_GRANTED",
+                "invitedAt": member.invited_at,
+                "expiresAt": invitation.expires_at if invitation else None,
+            }
+        )
+    return {"members": output}
+
+
+@router.post("/invitations/{invitationId}/resend", status_code=201, tags=["Family"])
+async def resend_invitation(
+    invitation_id: Annotated[str, Path(alias="invitationId")],
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    require_role(user, UserRole.CHILD)
+    old = await session.get(Invitation, invitation_id)
+    if old is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "초대를 찾을 수 없습니다")
+    member = await session.get(FamilyMember, old.member_id)
+    family = await family_for_child(session, user.id)
+    if member is None or family is None or member.family_id != family.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "가족 접근 권한이 없습니다")
+    invitation = Invitation(
+        member_id=member.id,
+        code=await unique_invitation_code(session),
+        expires_at=datetime.now(UTC) + timedelta(hours=24),
+    )
+    session.add(invitation)
+    await session.commit()
+    return invitation_dict(invitation)
+
+
+@router.post("/invitations/accept", tags=["Family"])
+async def accept_invitation(
+    payload: InvitationAccept, user: CurrentUser, session: SessionDep
+) -> dict:
+    require_role(user, UserRole.PARENT)
+    invitation = await session.scalar(
+        select(Invitation)
+        .where(Invitation.code == payload.code)
+        .order_by(Invitation.created_at.desc())
+    )
+    if invitation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "초대 코드를 찾을 수 없습니다")
+    if aware(invitation.expires_at) <= datetime.now(UTC):
+        raise HTTPException(status.HTTP_410_GONE, "만료된 초대예요. 다시 초대를 요청해주세요")
+    member = await session.get(FamilyMember, invitation.member_id)
+    if member is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "가족 구성원을 찾을 수 없습니다")
+    if member.user_id and member.user_id != user.id:
+        raise HTTPException(status.HTTP_409_CONFLICT, "이미 다른 계정이 수락한 초대입니다")
+    member.user_id = user.id
+    invitation.accepted_at = datetime.now(UTC)
+    await session.commit()
+    return {"familyId": member.family_id, "memberId": member.id, "status": "AWAITING_CONSENT"}
+
+
+# Consent
+@router.get("/consents/document", tags=["Consent"])
+async def consent_document(request: Request) -> dict:
+    version = settings_from(request).consent_document_version
+    return {
+        "version": version,
+        "fullText": (
+            "통화 중 증상·복약·활동·수면 및 음성 특징값을 수집해 개인의 과거 기록과 "
+            "비교합니다. 원본 오디오는 분석 직후 즉시 폐기하며 특징값과 구조화 텍스트만 "
+            "저장합니다. 결과는 의료 진단이나 치료 지시가 아닙니다."
+        ),
+        "collectedItems": ["증상", "복약", "활동", "수면", "음성 특징값"],
+        "purpose": "가족 통화 기반 건강 변화 기록과 리포트 제공",
+        "retentionPeriod": "동의 철회 시까지",
+        "rawAudioPolicy": "원본 오디오는 분석 직후 즉시 폐기합니다",
+        "requiredItems": CONSENT_ITEMS,
+    }
+
+
+@router.post("/consents", status_code=201, tags=["Consent"])
+async def submit_consent(
+    payload: ConsentSubmit, request: Request, user: CurrentUser, session: SessionDep
+) -> dict:
+    require_role(user, UserRole.PARENT)
+    settings = settings_from(request)
+    if payload.document_version != settings.consent_document_version:
+        raise HTTPException(status.HTTP_409_CONFLICT, "최신 동의 안내를 다시 확인해주세요")
+    if not payload.scrolled_to_end:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "안내 내용을 끝까지 확인해주세요")
+    if payload.decision == "GRANT" and not set(CONSENT_ITEMS).issubset(payload.agreed_items):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "필수 항목에 모두 동의해야 시작할 수 있어요"
+        )
+    record = ConsentRecord(
+        user_id=user.id,
+        document_version=payload.document_version,
+        decision=(
+            ConsentDecision.GRANTED.value
+            if payload.decision == "GRANT"
+            else ConsentDecision.DENIED.value
+        ),
+        agreed_items=payload.agreed_items if payload.decision == "GRANT" else [],
+        agreed_at=datetime.now(UTC),
+    )
+    session.add(record)
+    await session.commit()
+    return consent_dict(record)
+
+
+def consent_dict(record: ConsentRecord) -> dict:
+    return {
+        "consentId": record.id,
+        "userId": record.user_id,
+        "documentVersion": record.document_version,
+        "status": record.decision,
+        "agreedItems": record.agreed_items,
+        "agreedAt": record.agreed_at,
+    }
+
+
+@router.get("/consents/me", tags=["Consent"])
+async def my_consent(user: CurrentUser, session: SessionDep) -> dict:
+    record = await latest_consent(session, user.id)
+    if record is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "동의 기록이 없습니다")
+    return consent_dict(record)
+
+
+# Profile and questions
+@router.get("/parents/{parentId}/profile", tags=["Profile"])
+async def get_profile(
+    parent_id: Annotated[str, Path(alias="parentId")],
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    await ensure_report_access(session, user, parent_id)
+    profile = await session.get(ParentProfile, parent_id)
+    if profile is None:
+        return {"parentId": parent_id, "conditions": [], "updatedAt": None}
+    return {
+        "parentId": profile.parent_id,
+        "conditions": profile.conditions,
+        "updatedAt": profile.updated_at,
+    }
+
+
+@router.put("/parents/{parentId}/profile", tags=["Profile"])
+async def put_profile(
+    parent_id: Annotated[str, Path(alias="parentId")],
+    payload: ProfilePut,
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    if user.role == UserRole.CHILD.value:
+        await ensure_child_can_access_parent(session, user, parent_id)
+    elif user.id != parent_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "프로필 접근 권한이 없습니다")
+    if not await has_consent(session, parent_id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "부모님 동의가 완료되어야 등록할 수 있어요")
+    profile = await session.get(ParentProfile, parent_id)
+    if profile is None:
+        profile = ParentProfile(parent_id=parent_id, conditions=payload.conditions)
+        session.add(profile)
+    else:
+        profile.conditions = payload.conditions
+        profile.updated_at = datetime.now(UTC)
+    await session.commit()
+    return {
+        "parentId": profile.parent_id,
+        "conditions": profile.conditions,
+        "updatedAt": profile.updated_at,
+    }
+
+
+@router.get("/parents/{parentId}/daily-questions", tags=["Question"])
+async def get_daily_questions(
+    parent_id: Annotated[str, Path(alias="parentId")],
+    request: Request,
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    await ensure_report_access(session, user, parent_id)
+    source, questions = await questions_for_parent(request, session, parent_id)
+    return {"source": source, "questions": [item.model_dump(by_alias=True) for item in questions]}
+
+
+# Call
+@router.post("/calls", status_code=201, tags=["Call"])
+async def create_call(
+    payload: CallCreate,
+    request: Request,
+    background: BackgroundTasks,
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    require_role(user, UserRole.CHILD)
+    await ensure_child_can_access_parent(session, user, payload.callee_id)
+    parent = await session.get(User, payload.callee_id)
+    if parent is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "부모 계정을 찾을 수 없습니다")
+    source, questions = await questions_for_parent(request, session, parent.id)
+    del source
+    recording_enabled = await has_consent(session, parent.id)
+    latest = await latest_consent(session, parent.id)
+    disabled_reason = None
+    if not recording_enabled:
+        disabled_reason = "CONSENT_DENIED" if latest else "CONSENT_PENDING"
+    call = CallRecord(
+        parent_id=parent.id,
+        child_id=user.id,
+        state=CallState.RINGING.value,
+        room_name=f"collog-{datetime.now(UTC):%Y%m%d}-{random.randrange(10**10):010d}",
+        recording_enabled=recording_enabled,
+        recording_disabled_reason=disabled_reason,
+        asked_question_ids=[item.question_id for item in questions],
+    )
+    session.add(call)
+    await session.flush()
+    livekit = request.app.state.container.livekit
+    try:
+        await livekit.create_room(call.room_name)
+    except LiveKitError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    token = livekit.participant_token(call.room_name, user.id, user.name)
+    voip_token = await session.scalar(
+        select(Device.voip_token)
+        .where(
+            Device.user_id == parent.id,
+            Device.platform == "IOS",
+            Device.voip_token.is_not(None),
+        )
+        .order_by(Device.created_at.desc())
+        .limit(1)
+    )
+    await session.commit()
+    if voip_token:
+        background.add_task(
+            deliver_incoming_call_push,
+            request.app.state.container.voip_push,
+            voip_token,
+            IncomingCallPush(
+                call_id=call.id,
+                caller_id=user.id,
+                caller_name=user.name,
+                expires_at=datetime.now(UTC)
+                + timedelta(seconds=settings_from(request).incoming_call_ttl_seconds),
+            ),
+        )
+    elif settings_from(request).apns_voip_enabled:
+        logger.warning("no iOS VoIP token registered for parent %s", parent.id)
+    response = CallCreated(
+        call_id=call.id,
+        livekit_url=settings_from(request).livekit_url,
+        room_name=call.room_name,
+        access_token=token,
+        recording_enabled=recording_enabled,
+        recording_disabled_reason=disabled_reason,
+        recording_disabled_message="동의가 완료되면 기록할 수 있어요" if disabled_reason else None,
+        questions=questions,
+        audio_constraints=AudioConstraints(),
+    )
+    return response.model_dump(by_alias=True)
+
+
+@router.post("/calls/{callId}/accept", tags=["Call"])
+async def accept_call(
+    call_id: Annotated[str, Path(alias="callId")],
+    request: Request,
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    require_role(user, UserRole.PARENT)
+    call = await session.get(CallRecord, call_id)
+    if call is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "통화를 찾을 수 없습니다")
+    if call.parent_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "수신 권한이 없습니다")
+    if call.state not in {CallState.RINGING.value, CallState.CREATED.value}:
+        raise HTTPException(status.HTTP_409_CONFLICT, "이미 종료되었거나 응답한 통화입니다")
+    call.state = CallState.ACTIVE.value
+    call.accepted_at = datetime.now(UTC)
+    livekit = request.app.state.container.livekit
+    token = livekit.participant_token(call.room_name, user.id, user.name)
+    if call.recording_enabled:
+        for identity, kind, filename in (
+            (call.parent_id, AssetKind.WEBRTC_EGRESS_PARENT, "parent.ogg"),
+            (call.child_id, AssetKind.WEBRTC_EGRESS_CHILD, "child.ogg"),
+        ):
+            key = f"calls/{call.id}/egress/{filename}"
+            asset = AudioAsset(
+                call_id=call.id,
+                kind=kind.value,
+                uri=request.app.state.container.storage.object_uri(key),
+                content_type="audio/ogg",
+            )
+            session.add(asset)
+            await session.flush()
+            try:
+                started = await livekit.start_participant_egress(call.room_name, identity, key)
+                asset.egress_id = started.egress_id
+            except LiveKitError as exc:
+                asset.status = AssetStatus.FAILED.value
+                call.processing_error = str(exc)[:2000]
+    await session.commit()
+    response = CallAccepted(
+        call_id=call.id,
+        livekit_url=settings_from(request).livekit_url,
+        room_name=call.room_name,
+        access_token=token,
+        raw_capture_required=call.recording_enabled,
+        audio_constraints=AudioConstraints(),
+    )
+    return response.model_dump(by_alias=True)
+
+
+@router.post("/calls/{callId}/decline", tags=["Call"])
+async def decline_call(
+    call_id: Annotated[str, Path(alias="callId")],
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    call = await session.get(CallRecord, call_id)
+    if call is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "통화를 찾을 수 없습니다")
+    await ensure_call_access(session, user, call)
+    if call.state not in {CallState.RINGING.value, CallState.CREATED.value}:
+        raise HTTPException(status.HTTP_409_CONFLICT, "이미 처리된 통화입니다")
+    call.state = CallState.ENDED.value
+    call.ended_at = datetime.now(UTC)
+    call.duration_sec = 0
+    await session.commit()
+    return {"status": "DECLINED"}
+
+
+@router.post("/calls/{callId}/end", tags=["Call"])
+async def end_call(
+    call_id: Annotated[str, Path(alias="callId")],
+    request: Request,
+    background: BackgroundTasks,
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    call = await session.get(CallRecord, call_id)
+    if call is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "통화를 찾을 수 없습니다")
+    await ensure_call_access(session, user, call)
+    if call.ended_at is None:
+        call.ended_at = datetime.now(UTC)
+        call.state = CallState.ENDED.value
+        started = aware(call.accepted_at or call.started_at)
+        call.duration_sec = max(0, round((datetime.now(UTC) - started).total_seconds()))
+        local_hour = started.astimezone(ZoneInfo("Asia/Seoul")).hour
+        call.time_slot = (
+            TimeSlot.MORNING.value if 6 <= local_hour <= 11 else TimeSlot.AFTERNOON_EVENING.value
+        )
+        assets = list(
+            await session.scalars(
+                select(AudioAsset).where(
+                    AudioAsset.call_id == call.id, AudioAsset.egress_id.is_not(None)
+                )
+            )
+        )
+        for asset in assets:
+            try:
+                await request.app.state.container.livekit.stop_egress(asset.egress_id)
+            except LiveKitError:
+                pass
+        await session.commit()
+    background.add_task(request.app.state.container.pipeline.process, call.id)
+    return call_to_dict(call)
+
+
+@router.post("/calls/{callId}/raw-audio/upload-url", tags=["Call"])
+async def raw_audio_upload_url(
+    call_id: Annotated[str, Path(alias="callId")],
+    payload: RawAudioUploadRequest,
+    request: Request,
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    call = await session.get(CallRecord, call_id)
+    if call is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "통화를 찾을 수 없습니다")
+    if user.id != call.parent_id or not call.recording_enabled:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "원시 오디오 업로드 권한이 없습니다")
+    key = f"calls/{call.id}/raw/parent-{random.randrange(10**10):010d}.wav"
+    asset = AudioAsset(
+        call_id=call.id,
+        kind=AssetKind.DEVICE_RAW.value,
+        uri=request.app.state.container.storage.object_uri(key),
+        content_type=payload.content_type,
+        duration_sec=payload.duration_sec,
+        sample_rate=payload.sample_rate,
+    )
+    session.add(asset)
+    await session.commit()
+    upload_url = await request.app.state.container.storage.create_upload_url(
+        key, payload.content_type
+    )
+    return {
+        "uploadUrl": upload_url,
+        "assetId": asset.id,
+        "expiresIn": settings_from(request).upload_url_ttl_seconds,
+    }
+
+
+@router.put("/uploads/{encoded_key:path}", include_in_schema=False)
+async def local_upload(
+    encoded_key: str,
+    request: Request,
+    expires: int,
+    signature: str,
+) -> Response:
+    storage = request.app.state.container.storage
+    if not isinstance(storage, LocalStorage):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "로컬 업로드가 비활성화되어 있습니다")
+    if not storage.verify_upload(encoded_key, expires, signature):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "업로드 URL이 만료되었거나 잘못되었습니다")
+    body = await request.body()
+    await storage.write(encoded_key, body)
+    return Response(status_code=204)
+
+
+@router.post("/calls/{callId}/raw-audio/complete", status_code=202, tags=["Call"])
+async def raw_audio_complete(
+    call_id: Annotated[str, Path(alias="callId")],
+    payload: RawAudioComplete,
+    request: Request,
+    background: BackgroundTasks,
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    call = await session.get(CallRecord, call_id)
+    asset = await session.get(AudioAsset, payload.asset_id)
+    if call is None or asset is None or asset.call_id != call.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "오디오 자산을 찾을 수 없습니다")
+    if user.id != call.parent_id or asset.kind != AssetKind.DEVICE_RAW.value:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "오디오 자산 접근 권한이 없습니다")
+    asset.status = AssetStatus.UPLOADED.value
+    asset.uploaded_at = datetime.now(UTC)
+    await session.commit()
+    background.add_task(request.app.state.container.pipeline.process, call.id)
+    return {"status": "QUEUED"}
+
+
+@router.get("/calls/{callId}", tags=["Call"])
+async def get_call(
+    call_id: Annotated[str, Path(alias="callId")],
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    call = await session.get(CallRecord, call_id)
+    if call is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "통화를 찾을 수 없습니다")
+    await ensure_call_access(session, user, call)
+    return call_to_dict(call)
+
+
+@router.get("/parents/{parentId}/calls", tags=["Call"])
+async def list_calls(
+    parent_id: Annotated[str, Path(alias="parentId")],
+    user: CurrentUser,
+    session: SessionDep,
+    from_: Annotated[date | None, Query(alias="from")] = None,
+    to: date | None = None,
+) -> dict:
+    await ensure_report_access(session, user, parent_id)
+    statement = select(CallRecord).where(CallRecord.parent_id == parent_id)
+    if from_:
+        statement = statement.where(
+            CallRecord.started_at >= datetime.combine(from_, datetime.min.time())
+        )
+    if to:
+        statement = statement.where(
+            CallRecord.started_at < datetime.combine(to + timedelta(days=1), datetime.min.time())
+        )
+    calls = list(await session.scalars(statement.order_by(CallRecord.started_at.desc())))
+    return {"calls": [call_to_dict(call) for call in calls]}
+
+
+# Analysis
+@router.get("/calls/{callId}/transcript", tags=["Analysis"])
+async def get_transcript(
+    call_id: Annotated[str, Path(alias="callId")],
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    call = await session.get(CallRecord, call_id)
+    if call is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "통화를 찾을 수 없습니다")
+    await ensure_call_access(session, user, call)
+    item = await session.scalar(select(Transcript).where(Transcript.call_id == call_id))
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "전사 결과가 아직 없습니다")
+    return {
+        "callId": call_id,
+        "provider": item.provider,
+        "excluded": item.excluded,
+        "exclusionReason": item.exclusion_reason,
+        "parentSpeechSec": item.parent_speech_sec,
+        "segments": item.segments,
+    }
+
+
+@router.get("/calls/{callId}/extraction", tags=["Analysis"])
+async def get_extraction(
+    call_id: Annotated[str, Path(alias="callId")],
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    call = await session.get(CallRecord, call_id)
+    if call is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "통화를 찾을 수 없습니다")
+    await ensure_call_access(session, user, call)
+    item = await session.scalar(select(HealthExtraction).where(HealthExtraction.call_id == call_id))
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "추출 결과가 아직 없습니다")
+    return {
+        "callId": call_id,
+        "parseStatus": item.parse_status,
+        "symptom": item.symptom,
+        "medication": item.medication,
+        "activity": item.activity,
+        "sleep": item.sleep,
+        "rawTranscript": item.raw_transcript,
+    }
+
+
+@router.get("/calls/{callId}/acoustic-features", tags=["Analysis"])
+async def get_acoustic_features(
+    call_id: Annotated[str, Path(alias="callId")],
+    user: CurrentUser,
+    session: SessionDep,
+) -> dict:
+    call = await session.get(CallRecord, call_id)
+    if call is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "통화를 찾을 수 없습니다")
+    await ensure_call_access(session, user, call)
+    items = list(
+        await session.scalars(select(AcousticFeature).where(AcousticFeature.call_id == call_id))
+    )
+    if not items:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "음향 분석 결과가 아직 없습니다")
+    return {
+        "callId": call_id,
+        "audioSource": items[0].audio_source,
+        "features": [
+            {
+                "metric": item.metric,
+                "value": item.value,
+                "unit": item.unit,
+                "status": item.status,
+                "unmeasurableReason": item.unmeasurable_reason,
+            }
+            for item in items
+        ],
+    }
+
+
+# Signal and reports
+@router.get("/parents/{parentId}/baseline", tags=["Signal"])
+async def get_baselines(
+    parent_id: Annotated[str, Path(alias="parentId")],
+    request: Request,
+    user: CurrentUser,
+    session: SessionDep,
+    kind: Literal["ANCHOR", "ROLLING"] | None = None,
+) -> dict:
+    await ensure_report_access(session, user, parent_id)
+    await request.app.state.container.signals.rebuild_baselines(session, parent_id)
+    await session.commit()
+    statement = select(Baseline).where(Baseline.parent_id == parent_id)
+    if kind:
+        statement = statement.where(Baseline.kind == kind)
+    items = list(await session.scalars(statement.order_by(Baseline.metric, Baseline.time_slot)))
+    return {"baselines": [baseline_to_dict(item) for item in items]}
+
+
+@router.get("/parents/{parentId}/signals", tags=["Signal"])
+async def get_signals(
+    parent_id: Annotated[str, Path(alias="parentId")],
+    user: CurrentUser,
+    session: SessionDep,
+    filter: Literal["ALL", "PROMOTED", "ACUTE"] = "ALL",
+) -> dict:
+    await ensure_report_access(session, user, parent_id)
+    statement = select(ChangeSignal).where(ChangeSignal.parent_id == parent_id)
+    if filter == "PROMOTED":
+        statement = statement.where(ChangeSignal.promoted.is_(True))
+    elif filter == "ACUTE":
+        statement = statement.where(ChangeSignal.acute.is_(True))
+    items = list(await session.scalars(statement.order_by(ChangeSignal.observed_at.desc())))
+    return {"signals": [signal_to_dict(item) for item in items]}
+
+
+@router.get("/parents/{parentId}/reports", tags=["Report"])
+async def get_report(
+    parent_id: Annotated[str, Path(alias="parentId")],
+    request: Request,
+    user: CurrentUser,
+    session: SessionDep,
+    period: Literal["WEEKLY", "MONTHLY"],
+    date_: Annotated[date | None, Query(alias="date")] = None,
+) -> dict:
+    await ensure_report_access(session, user, parent_id)
+    return await request.app.state.container.reports.get_or_issue(session, parent_id, period, date_)
+
+
+# LiveKit webhook and local health
+@router.post("/webhooks/livekit", status_code=204, tags=["Webhook"])
+async def livekit_webhook(
+    request: Request,
+    background: BackgroundTasks,
+    session: SessionDep,
+    authorization: Annotated[str, Header()] = "",
+) -> Response:
+    body = (await request.body()).decode()
+    try:
+        event = request.app.state.container.livekit.receive_webhook(body, authorization)
+    except LiveKitError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc
+    event_name = event.get("event")
+    if event_name != "egress_ended":
+        return Response(status_code=204)
+    info = event.get("egress_info") or event.get("egressInfo") or {}
+    egress_id = info.get("egress_id") or info.get("egressId")
+    if not egress_id:
+        return Response(status_code=204)
+    asset = await session.scalar(select(AudioAsset).where(AudioAsset.egress_id == egress_id))
+    if asset is None:
+        return Response(status_code=204)
+    egress_status = str(info.get("status", "EGRESS_COMPLETE"))
+    if egress_status in {"EGRESS_COMPLETE", "3", "COMPLETE"}:
+        asset.status = AssetStatus.UPLOADED.value
+        asset.uploaded_at = datetime.now(UTC)
+    else:
+        asset.status = AssetStatus.FAILED.value
+    await session.commit()
+    background.add_task(request.app.state.container.pipeline.process, asset.call_id)
+    return Response(status_code=204)
+
+
+@router.get("/health", include_in_schema=False)
+async def health() -> dict:
+    return {"status": "ok"}

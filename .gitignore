@@ -1,0 +1,21 @@
+# Secrets and local runtime state
+.env
+*.p8
+secrets/
+.data/
+*.db
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Editors / macOS
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,11 @@
+api_key: collog-dev-key
+api_secret: collog-dev-secret-change-before-production
+ws_url: ws://livekit:7880
+insecure: true
+
+redis:
+  address: redis:6379
+
+health_port: 8081
+log_level: info
+enable_chrome_sandbox: true

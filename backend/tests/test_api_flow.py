@@ -1,0 +1,227 @@
+from __future__ import annotations
+
+from urllib.parse import urlsplit
+
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from app.models import AssetKind, AudioAsset
+from tests.conftest import auth, create_user
+
+
+def onboard_family(client: TestClient):
+    child_token, child = create_user(client, "01011112222", "CHILD", "김철수")
+    parent_token, parent = create_user(client, "01033334444", "PARENT", "김순자")
+    invited = client.post(
+        f"/v1/families/{child['familyId']}/invitations",
+        headers=auth(child_token),
+        json={"name": "어머니", "relation": "MOTHER"},
+    )
+    assert invited.status_code == 201, invited.text
+    accepted = client.post(
+        "/v1/invitations/accept",
+        headers=auth(parent_token),
+        json={"code": invited.json()["code"]},
+    )
+    assert accepted.status_code == 200, accepted.text
+    document = client.get("/v1/consents/document").json()
+    consented = client.post(
+        "/v1/consents",
+        headers=auth(parent_token),
+        json={
+            "documentVersion": document["version"],
+            "decision": "GRANT",
+            "scrolledToEnd": True,
+            "agreedItems": document["requiredItems"],
+        },
+    )
+    assert consented.status_code == 201, consented.text
+    return child_token, child, parent_token, parent
+
+
+def test_invitation_consent_profile_and_questions(client: TestClient) -> None:
+    child_token, child, _, parent = onboard_family(client)
+    members = client.get(f"/v1/families/{child['familyId']}/members", headers=auth(child_token))
+    assert members.status_code == 200
+    assert members.json()["members"][0]["status"] == "CONSENT_GRANTED"
+
+    profile = client.put(
+        f"/v1/parents/{parent['id']}/profile",
+        headers=auth(child_token),
+        json={"conditions": ["HYPERTENSION", "ASTHMA"]},
+    )
+    assert profile.status_code == 200, profile.text
+    questions = client.get(f"/v1/parents/{parent['id']}/daily-questions", headers=auth(child_token))
+    assert questions.status_code == 200
+    assert questions.json()["source"] == "CONDITION_POOL"
+    assert 1 <= len(questions.json()["questions"]) <= 2
+
+
+def test_call_without_parent_consent_never_records(client: TestClient) -> None:
+    child_token, child = create_user(client, "01055556666", "CHILD", "자녀")
+    parent_token, parent = create_user(client, "01077778888", "PARENT", "부모")
+    invited = client.post(
+        f"/v1/families/{child['familyId']}/invitations",
+        headers=auth(child_token),
+        json={"name": "아버지", "relation": "FATHER"},
+    )
+    client.post(
+        "/v1/invitations/accept",
+        headers=auth(parent_token),
+        json={"code": invited.json()["code"]},
+    )
+    created = client.post("/v1/calls", headers=auth(child_token), json={"calleeId": parent["id"]})
+    assert created.status_code == 201
+    assert created.json()["recordingEnabled"] is False
+    assert created.json()["recordingDisabledReason"] == "CONSENT_PENDING"
+    accepted = client.post(
+        f"/v1/calls/{created.json()['callId']}/accept", headers=auth(parent_token)
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["rawCaptureRequired"] is False
+
+
+def test_ios_device_registration_triggers_voip_push(client: TestClient) -> None:
+    child_token, _, parent_token, parent = onboard_family(client)
+    registered = client.post(
+        "/v1/devices",
+        headers=auth(parent_token),
+        json={
+            "platform": "IOS",
+            "token": "11" * 32,
+            "voipToken": "aa" * 32,
+        },
+    )
+    assert registered.status_code == 201, registered.text
+
+    created = client.post(
+        "/v1/calls",
+        headers=auth(child_token),
+        json={"calleeId": parent["id"]},
+    )
+    assert created.status_code == 201, created.text
+
+    push_gateway = client.app.state.container.voip_push
+    assert len(push_gateway.sent) == 1
+    token, push = push_gateway.sent[0]
+    assert token == "aa" * 32
+    assert push.call_id == created.json()["callId"]
+    assert push.payload()["call"]["callUUID"] == created.json()["callId"]
+    assert "accessToken" not in push.payload()["call"]
+
+
+def test_complete_call_pipeline(client: TestClient) -> None:
+    child_token, _, parent_token, parent = onboard_family(client)
+    created = client.post(
+        "/v1/calls",
+        headers=auth(child_token),
+        json={"calleeId": parent["id"]},
+    )
+    assert created.status_code == 201, created.text
+    call_id = created.json()["callId"]
+    assert created.json()["recordingEnabled"] is True
+    assert created.json()["audioConstraints"] == {
+        "echoCancellation": True,
+        "noiseSuppression": False,
+        "autoGainControl": False,
+        "dtx": False,
+        "audioBitrate": 48000,
+        "rawCaptureSampleRate": 48000,
+    }
+
+    accepted = client.post(f"/v1/calls/{call_id}/accept", headers=auth(parent_token))
+    assert accepted.status_code == 200, accepted.text
+    ended = client.post(f"/v1/calls/{call_id}/end", headers=auth(child_token))
+    assert ended.status_code == 200, ended.text
+
+    upload = client.post(
+        f"/v1/calls/{call_id}/raw-audio/upload-url",
+        headers=auth(parent_token),
+        json={"contentType": "audio/wav", "durationSec": 45, "sampleRate": 48000},
+    )
+    assert upload.status_code == 200, upload.text
+    parsed = urlsplit(upload.json()["uploadUrl"])
+    uploaded = client.put(parsed.path + "?" + parsed.query, content=b"fake-wave")
+    assert uploaded.status_code == 204, uploaded.text
+    completed = client.post(
+        f"/v1/calls/{call_id}/raw-audio/complete",
+        headers=auth(parent_token),
+        json={"assetId": upload.json()["assetId"]},
+    )
+    assert completed.status_code == 202
+
+    async def prepare_egress_assets():
+        database = client.app.state.container.database
+        async with database.sessions() as session:
+            assets = list(
+                await session.scalars(select(AudioAsset).where(AudioAsset.call_id == call_id))
+            )
+        storage = client.app.state.container.storage
+        parent_text = (
+            "PARENT: 어젯밤에 기침 때문에 두 번 깼어. 그래도 아침 혈압약은 챙겨 먹었고 "
+            "오후에는 공원을 삼십 분 정도 천천히 산책했어. 오늘은 잠이 조금 부족해서 "
+            "평소보다 졸리지만 다른 불편함은 따로 이야기하지 않았어."
+        )
+        child_text = "CHILD: 기침 때문에 깨셨군요. 약은 드셨고 산책도 하셨어요?"
+        for asset in assets:
+            if asset.kind == AssetKind.WEBRTC_EGRESS_PARENT.value:
+                await storage.write(asset.uri.removeprefix("local://"), parent_text.encode())
+            elif asset.kind == AssetKind.WEBRTC_EGRESS_CHILD.value:
+                await storage.write(asset.uri.removeprefix("local://"), child_text.encode())
+        return [asset for asset in assets if asset.egress_id]
+
+    egress_assets = client.portal.call(prepare_egress_assets)
+    for asset in egress_assets:
+        webhook = client.post(
+            "/v1/webhooks/livekit",
+            json={
+                "event": "egress_ended",
+                "egress_info": {"egress_id": asset.egress_id, "status": "EGRESS_COMPLETE"},
+            },
+        )
+        assert webhook.status_code == 204, webhook.text
+
+    call = client.get(f"/v1/calls/{call_id}", headers=auth(child_token))
+    assert call.status_code == 200
+    assert call.json()["state"] == "ANALYZED"
+    assert call.json()["parentSpeechSec"] >= 20
+    assert call.json()["rawAudioPurgedAt"] is not None
+
+    transcript = client.get(f"/v1/calls/{call_id}/transcript", headers=auth(child_token))
+    assert transcript.status_code == 200
+    assert {segment["speaker"] for segment in transcript.json()["segments"]} == {
+        "PARENT",
+        "CHILD",
+    }
+    extraction = client.get(f"/v1/calls/{call_id}/extraction", headers=auth(child_token))
+    assert extraction.status_code == 200
+    assert extraction.json()["parseStatus"] == "OK"
+    assert "기침" in extraction.json()["symptom"]
+    assert extraction.json()["medication"] is not None
+    assert extraction.json()["activity"] is not None
+    assert extraction.json()["sleep"] is not None
+
+    acoustics = client.get(f"/v1/calls/{call_id}/acoustic-features", headers=auth(child_token))
+    assert acoustics.status_code == 200
+    assert len(acoustics.json()["features"]) == 4
+    assert {item["status"] for item in acoustics.json()["features"]} == {"UNMEASURABLE"}
+
+    report = client.get(
+        f"/v1/parents/{parent['id']}/reports?period=WEEKLY", headers=auth(child_token)
+    )
+    assert report.status_code == 200, report.text
+    assert report.json()["disclaimer"]
+    assert report.json()["analyzedCallCount"] == 1
+
+
+def test_openapi_contains_contract_endpoints(client: TestClient) -> None:
+    paths = client.get("/openapi.json").json()["paths"]
+    required = {
+        "/v1/calls",
+        "/v1/calls/{callId}/accept",
+        "/v1/calls/{callId}/end",
+        "/v1/calls/{callId}/transcript",
+        "/v1/calls/{callId}/extraction",
+        "/v1/webhooks/livekit",
+    }
+    assert required.issubset(paths)

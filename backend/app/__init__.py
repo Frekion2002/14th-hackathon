@@ -1,0 +1,1 @@
+"""Collog backend application package."""
