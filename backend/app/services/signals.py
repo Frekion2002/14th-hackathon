@@ -21,11 +21,12 @@ METRIC_LABELS = {
 def median_and_mad(values: list[float]) -> tuple[float, float]:
     center = float(statistics.median(values))
     raw_mad = float(statistics.median(abs(value - center) for value in values))
-    floor = max(abs(center) * 0.01, 1e-6)
-    return center, max(raw_mad, floor)
+    return center, raw_mad
 
 
 def compare(value: float, center: float, mad: float, threshold: float) -> dict[str, Any]:
+    if mad <= 0:
+        raise ValueError("MAD가 0인 기준선은 robust Z를 계산할 수 없습니다")
     if center == 0:
         delta_pct = 0.0 if value == 0 else value * 100.0
     else:
@@ -50,9 +51,18 @@ class SignalService:
     async def rebuild_baselines(
         self, session: AsyncSession, parent_id: str, exclude_call_id: str | None = None
     ) -> None:
+        old_baselines = list(
+            await session.scalars(select(Baseline).where(Baseline.parent_id == parent_id))
+        )
+        old_anchor_dates = {
+            (item.metric, item.time_slot): item.anchor_set_at
+            for item in old_baselines
+            if item.kind == BaselineKind.ANCHOR.value and item.anchor_set_at
+        }
         await session.execute(delete(Baseline).where(Baseline.parent_id == parent_id))
         today = datetime.now(UTC).date()
-        rolling_from = today - timedelta(weeks=self.settings.baseline_window_weeks)
+        this_week = week_start(today)
+        rolling_from = this_week - timedelta(weeks=self.settings.baseline_window_weeks - 1)
         for metric in Metric:
             for time_slot in ("MORNING", "AFTERNOON_EVENING"):
                 statement = (
@@ -70,45 +80,52 @@ class SignalService:
                 if exclude_call_id:
                     statement = statement.where(CallRecord.id != exclude_call_id)
                 records = (await session.execute(statement)).all()
+                weekly = weekly_medians(records)
                 for kind in BaselineKind:
-                    selected = records
-                    if kind == BaselineKind.ANCHOR and records:
-                        first = records[0].observed_at.date()
+                    selected = weekly
+                    if kind == BaselineKind.ANCHOR and weekly:
+                        first = weekly[0][0]
                         selected = [
                             row
-                            for row in records
-                            if row.observed_at.date() <= first + timedelta(weeks=4)
+                            for row in weekly
+                            if row[0] < first + timedelta(weeks=self.settings.baseline_window_weeks)
                         ]
                         window_from = first
-                        window_to = first + timedelta(weeks=4)
+                        window_to = first + timedelta(
+                            weeks=self.settings.baseline_window_weeks, days=-1
+                        )
                     elif kind == BaselineKind.ROLLING:
-                        selected = [
-                            row for row in records if row.observed_at.date() >= rolling_from
-                        ]
+                        selected = [row for row in weekly if row[0] >= rolling_from]
                         window_from = rolling_from
-                        window_to = today
+                        window_to = this_week + timedelta(days=6)
                     else:
                         window_from = today
                         window_to = today
-                    values = [float(row.value) for row in selected]
+                    values = [float(value) for _, value in selected]
                     ready = len(values) >= self.settings.baseline_required_samples
                     center, mad = median_and_mad(values) if ready else (None, None)
+                    status = (
+                        "UNSCORABLE" if ready and mad == 0 else "READY" if ready else "COLLECTING"
+                    )
+                    anchor_key = (metric.value, time_slot)
                     session.add(
                         Baseline(
                             parent_id=parent_id,
                             metric=metric.value,
                             time_slot=time_slot,
                             kind=kind.value,
-                            status="READY" if ready else "COLLECTING",
+                            status=status,
                             sample_count=len(values),
                             required_count=self.settings.baseline_required_samples,
                             median=center,
                             mad=mad,
                             window_from=window_from,
                             window_to=window_to,
-                            anchor_set_at=datetime.now(UTC)
-                            if ready and kind == BaselineKind.ANCHOR
-                            else None,
+                            anchor_set_at=(
+                                old_anchor_dates.get(anchor_key) or datetime.now(UTC)
+                                if ready and kind == BaselineKind.ANCHOR
+                                else None
+                            ),
                         )
                     )
         await session.flush()
@@ -147,7 +164,7 @@ class SignalService:
                     float(anchor.mad),
                     self.settings.robust_z_threshold,
                 )
-                if anchor and anchor.status == "READY"
+                if anchor and anchor.status == "READY" and anchor.mad and anchor.mad > 0
                 else None
             )
             vs_rolling = (
@@ -157,7 +174,7 @@ class SignalService:
                     float(rolling.mad),
                     self.settings.robust_z_threshold,
                 )
-                if rolling and rolling.status == "READY"
+                if rolling and rolling.status == "READY" and rolling.mad and rolling.mad > 0
                 else None
             )
             consecutive = await self._consecutive_count(
@@ -166,6 +183,7 @@ class SignalService:
                 feature.metric,
                 call.time_slot,
                 vs_anchor,
+                feature.observed_at,
             )
             promoted = consecutive >= self.settings.promoted_consecutive_weeks
             acute = bool(vs_rolling and vs_rolling["significant"])
@@ -206,23 +224,60 @@ class SignalService:
         metric: str,
         time_slot: str,
         comparison: dict[str, Any] | None,
+        observed_at: datetime,
     ) -> int:
         if not comparison or not comparison["significant"]:
             return 0
-        previous = await session.scalar(
-            select(ChangeSignal)
-            .where(
-                ChangeSignal.parent_id == parent_id,
-                ChangeSignal.metric == metric,
-                ChangeSignal.time_slot == time_slot,
-                ChangeSignal.vs_anchor.is_not(None),
+        previous_items = list(
+            await session.scalars(
+                select(ChangeSignal)
+                .where(
+                    ChangeSignal.parent_id == parent_id,
+                    ChangeSignal.metric == metric,
+                    ChangeSignal.time_slot == time_slot,
+                    ChangeSignal.vs_anchor.is_not(None),
+                )
+                .order_by(ChangeSignal.observed_at.desc())
             )
-            .order_by(ChangeSignal.observed_at.desc())
-            .limit(1)
         )
-        if not previous or previous.vs_anchor.get("direction") != comparison["direction"]:
-            return 1
-        return previous.consecutive_weeks + 1
+        return consecutive_calendar_weeks(
+            previous_items, observed_at.date(), str(comparison["direction"])
+        )
+
+
+def week_start(value: date) -> date:
+    return value - timedelta(days=value.weekday())
+
+
+def weekly_medians(records: list[Any]) -> list[tuple[date, float]]:
+    grouped: dict[date, list[float]] = {}
+    for row in records:
+        observed = row.observed_at.date()
+        grouped.setdefault(week_start(observed), []).append(float(row.value))
+    return sorted((week, float(statistics.median(values))) for week, values in grouped.items())
+
+
+def consecutive_calendar_weeks(
+    previous_items: list[Any], current_date: date, direction: str
+) -> int:
+    current_week = week_start(current_date)
+    by_week: dict[date, Any] = {}
+    for item in previous_items:
+        item_week = week_start(item.observed_at.date())
+        if item_week < current_week:
+            by_week.setdefault(item_week, item)
+    count = 1
+    expected_week = current_week - timedelta(weeks=1)
+    while previous := by_week.get(expected_week):
+        previous_comparison = previous.vs_anchor or {}
+        if (
+            not previous_comparison.get("significant")
+            or previous_comparison.get("direction") != direction
+        ):
+            break
+        count += 1
+        expected_week -= timedelta(weeks=1)
+    return count
 
 
 def baseline_to_dict(item: Baseline) -> dict[str, Any]:

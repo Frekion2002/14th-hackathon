@@ -66,6 +66,7 @@ def daily_questions(
                 condition_code=condition,
                 tts_asset_url=tts_url,
                 duration_ms=duration_ms,
+                tts_mode="IOS_LOCAL",
             )
         )
     return source, views

@@ -14,10 +14,19 @@ class SttError(RuntimeError):
 
 
 @dataclass(slots=True)
+class SttWord:
+    start_ms: int
+    end_ms: int
+    text: str
+    confidence: float | None = None
+
+
+@dataclass(slots=True)
 class SttSegment:
     start_ms: int
     end_ms: int
     text: str
+    words: list[SttWord]
 
 
 @dataclass(slots=True)
@@ -25,6 +34,7 @@ class SttResult:
     provider: str
     speech_seconds: float
     segments: list[SttSegment]
+    words: list[SttWord]
 
 
 class SttGateway:
@@ -41,10 +51,22 @@ class MockSttGateway(SttGateway):
         del content_type
         text = audio.decode("utf-8", errors="ignore").strip()
         duration = max(0.0, len(text) / 4.0)
+        tokens = text.split()
+        token_duration = duration / len(tokens) if tokens else 0
+        words = [
+            SttWord(
+                start_ms=round(index * token_duration * 1000),
+                end_ms=round((index + 0.75) * token_duration * 1000),
+                text=token,
+                confidence=1.0,
+            )
+            for index, token in enumerate(tokens)
+        ]
         return SttResult(
             provider="mock-nova-3",
             speech_seconds=duration,
-            segments=[SttSegment(0, int(duration * 1000), text)] if text else [],
+            segments=[SttSegment(0, int(duration * 1000), text, words)] if text else [],
+            words=words,
         )
 
 
@@ -91,12 +113,21 @@ class DeepgramSttGateway(SttGateway):
         except (KeyError, IndexError, TypeError) as exc:
             raise SttError("Deepgram 응답에 전사 결과가 없습니다") from exc
 
+        alternative_words = [self._word(item) for item in alternative.get("words", [])]
         utterances = payload.get("results", {}).get("utterances", [])
         segments = [
             SttSegment(
                 start_ms=round(float(item.get("start", 0)) * 1000),
                 end_ms=round(float(item.get("end", 0)) * 1000),
                 text=str(item.get("transcript", "")).strip(),
+                words=(
+                    [self._word(word) for word in item.get("words", [])]
+                    or self._words_in_range(
+                        alternative_words,
+                        round(float(item.get("start", 0)) * 1000),
+                        round(float(item.get("end", 0)) * 1000),
+                    )
+                ),
             )
             for item in utterances
             if str(item.get("transcript", "")).strip()
@@ -104,20 +135,39 @@ class DeepgramSttGateway(SttGateway):
         if not segments and alternative.get("transcript"):
             duration = float(payload.get("metadata", {}).get("duration", 0))
             segments = [
-                SttSegment(0, round(duration * 1000), str(alternative["transcript"]).strip())
+                SttSegment(
+                    0,
+                    round(duration * 1000),
+                    str(alternative["transcript"]).strip(),
+                    alternative_words,
+                )
             ]
 
-        words = alternative.get("words", [])
-        speech_seconds = sum(
-            max(0.0, float(word.get("end", 0)) - float(word.get("start", 0))) for word in words
+        speech_seconds = (
+            sum(max(0, word.end_ms - word.start_ms) for word in alternative_words) / 1000
         )
-        if not words:
+        if not alternative_words:
             speech_seconds = sum(max(0, part.end_ms - part.start_ms) for part in segments) / 1000
         return SttResult(
             provider=f"deepgram-{self.settings.deepgram_model}",
             speech_seconds=speech_seconds,
             segments=segments,
+            words=alternative_words,
         )
+
+    @staticmethod
+    def _word(item: dict[str, Any]) -> SttWord:
+        confidence = item.get("confidence")
+        return SttWord(
+            start_ms=round(float(item.get("start", 0)) * 1000),
+            end_ms=round(float(item.get("end", 0)) * 1000),
+            text=str(item.get("punctuated_word") or item.get("word") or "").strip(),
+            confidence=float(confidence) if confidence is not None else None,
+        )
+
+    @staticmethod
+    def _words_in_range(words: list[SttWord], start_ms: int, end_ms: int) -> list[SttWord]:
+        return [word for word in words if start_ms <= (word.start_ms + word.end_ms) / 2 <= end_ms]
 
 
 def create_stt_gateway(settings: Settings) -> SttGateway:

@@ -64,10 +64,12 @@ class Settings(BaseSettings):
     consent_document_version: str = "2026-08-01.v3"
     parent_min_speech_seconds: int = 20
     raw_audio_wait_seconds: int = 30
-    baseline_required_samples: int = 3
+    baseline_required_samples: int = 4
     baseline_window_weeks: int = 4
     robust_z_threshold: float = 1.5
     promoted_consecutive_weeks: int = 4
+    acoustic_analyzer_version: str = "collog-acoustic-v1"
+    cough_score_threshold: float = 0.65
 
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     team_portal_enabled: bool = True

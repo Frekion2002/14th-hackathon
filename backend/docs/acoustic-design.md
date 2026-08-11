@@ -1,6 +1,6 @@
 # AI-2 실제 음향 지표 설계
 
-상태: 설계 확정, analyzer와 model dependency는 아직 미구현
+상태: hackathon prototype analyzer 구현 완료, 기침 labeled validation·실기기 보정 필요
 
 ## 1. 목표와 금지선
 
@@ -19,7 +19,7 @@
 ```text
 iOS 48 kHz mono PCM WAV
   ├─ 품질 검사
-  ├─ 16 kHz float32 정규화 ── Silero VAD / YAMNet
+  ├─ 16 kHz float32 정규화 ── pYIN / transient candidate detector
   ├─ 부모 Deepgram word·utterance timing ── 속도 / 휴지
   └─ voiced frame pYIN ── F0 variation
 ```
@@ -29,7 +29,8 @@ iOS 48 kHz mono PCM WAV
 - 발화 속도와 휴지는 부모 Track Egress의 Deepgram timing을 사용할 수 있다.
 - 48 kHz 원본은 decode 직후 메모리에서만 다루고 VAD/YAMNet용으로 16 kHz mono float32로
   resample한다.
-- 무거운 model은 FastAPI process가 아니라 별도 `analysis-worker` container에서 실행한다.
+- 현재 CPU 분석은 event loop를 막지 않도록 worker thread에서 실행한다. durable Redis
+  `analysis-worker` container 분리는 production 후속 작업이다.
 - 최종 특징값과 model/rule version을 저장한 뒤 원본 PCM을 폐기한다.
 
 ## 3. 공통 품질 게이트
@@ -43,7 +44,7 @@ iOS 48 kHz mono PCM WAV
 | 부모 발화 | 20초 이상 | `INSUFFICIENT_PARENT_SPEECH` |
 | clipping | `abs(sample) >= 0.999` frame 비율 1% 미만 | `EXCESSIVE_CLIPPING` |
 | 유효 음량 | speech RMS가 -45 dBFS 초과 | `SIGNAL_TOO_QUIET` |
-| VAD speech | 5초 이상 | `INSUFFICIENT_VOICED_AUDIO` |
+| 유효 pYIN frame | 2초 이상 | `INSUFFICIENT_VOICED_AUDIO` |
 
 threshold는 해커톤 fixture로 고정하지 않고 실기기 20~30통의 분포를 본 뒤 versioned config로
 확정한다.
@@ -80,8 +81,8 @@ unit = ratio (0..1)
 
 ### 4-3. 기본주파수 변동 `F0_VARIATION`
 
-Silero VAD가 speech로 분류한 raw PCM frame에서 `librosa.pyin`으로 F0와 voiced probability를
-구한다. 초기 범위는 65~400 Hz이며 voiced probability 0.8 이상 frame만 사용한다.
+raw PCM을 16 kHz로 변환하고 `librosa.pyin`으로 F0와 voiced probability를 구한다. 초기 범위는
+65~400 Hz이며 voiced probability 0.8 이상 frame만 사용한다.
 
 절대 Hz 표준편차 대신 개인의 평균 pitch에 덜 민감한 semitone robust spread를 사용한다.
 
@@ -93,16 +94,16 @@ unit = semitone_mad
 
 유효 F0 frame이 2초 미만이거나 octave jump가 과도하면 `UNMEASURABLE(PITCH_UNSTABLE)`이다.
 
-### 4-4. 기침 event `COUGH_EVENTS`
+### 4-4. 기침 후보 event `COUGH_EVENTS`
 
-YAMNet은 16 kHz mono waveform에서 AudioSet 521개 audio event score를 출력한다. 전체 부모
-raw PCM을 0.96초 patch/0.48초 hop으로 평가하고 `Cough` class score를 사용한다.
+현재 `transient-heuristic-v1`은 16 kHz mono waveform을 0.96초 patch/0.48초 hop으로 나눠
+상대 에너지 상승, 1 kHz 이상 power 비율, zero-crossing rate, crest factor를 조합한다. threshold
+이상 인접 patch를 750ms 기준으로 병합한다. 이는 파이프라인과 개인 기준선 데모를 위한 후보
+detector이며 cough로 임상 검증된 classifier가 아니다.
 
-1. validation set으로 threshold를 선택한다. 임의로 0.5를 production 값으로 고정하지 않는다.
-2. threshold를 넘는 인접 patch가 750ms 이내면 한 event로 병합한다.
-3. `Throat clearing`, speech, laughter score를 함께 저장해 error analysis에 사용하지만 기침
-   count에는 `Cough`만 포함한다.
-4. event마다 start/end/confidence/model version을 저장한다.
+현재 threshold 0.65는 deterministic transient fixture용 초기값이다. 실제 cough 30개와 hard
+negative 30개에서 precision 0.85를 만족하기 전에는 production threshold로 간주하지 않는다.
+그 평가가 완료되면 YAMNet/별도 cough classifier로 교체하고 detector version을 올린다.
 
 YAMNet은 범용 AudioSet classifier이지 의료기기용 기침 진단 model이 아니다. 따라서 UI에는
 항상 “기침 후보 event” 또는 검수 후 “기침 event”로만 표시한다.
@@ -119,7 +120,7 @@ YAMNet은 범용 AudioSet classifier이지 의료기기용 기침 진단 model�
 - `4주 연속`은 네 개의 서로 다른 ISO calendar week가 모두 같은 방향이고 중간 결측 주가
   없을 때만 성립한다.
 
-## 6. worker 계약
+## 6. 현재 실행 계약과 후속 worker
 
 ```text
 AcousticJob(callId, rawAudioUri, transcriptId, analyzerVersion)
@@ -129,12 +130,11 @@ AcousticJob(callId, rawAudioUri, transcriptId, analyzerVersion)
     ]
 ```
 
-권장 dependency:
+현재 dependency:
 
-- decode/resample: FFmpeg 또는 `soundfile` + `soxr`
-- VAD: Silero VAD ONNX, 16 kHz
+- decode: Python PCM WAV loader, resample: `librosa` + `soxr`
 - F0: `librosa.pyin`
-- cough: YAMNet SavedModel 또는 검증 후 ONNX/TFLite 변환본
+- cough: `transient-heuristic-v1`; validation 실패 시 YAMNet/검증된 ONNX classifier로 교체
 
 model artifact는 checksum과 license를 기록하고 container image에 pin한다. 외부 inference API로
 raw 건강 음성을 추가 전송하지 않는다.
@@ -174,16 +174,16 @@ raw 건강 음성을 추가 전송하지 않는다.
 raw PCM과 Egress 결과를 비교해 source 차이를 기록하되 raw PCM만 개인 기준선의 음향값으로
 채택한다.
 
-## 8. 구현 순서
+## 8. 구현 상태와 다음 순서
 
-1. Deepgram word timing을 보존하도록 `SttSegment`/Transcript schema 확장
-2. 품질 검사와 16 kHz canonical waveform loader
-3. Silero VAD + speech rate + pause ratio
-4. pYIN F0 variation
-5. YAMNet cough detector와 validation report
-6. 별도 worker/queue, idempotency, model version 저장
-7. calendar week 기준선/연속 판정 수정
-8. iPhone fixture E2E 후 threshold freeze
+1. 완료: Deepgram word timing 보존과 Transcript JSON 확장
+2. 완료: 16-bit PCM WAV loader, 품질 gate, 16 kHz 변환
+3. 완료: word timing speech rate/pause ratio
+4. 완료: pYIN F0 variation
+5. 완료: versioned transient cough 후보 detector와 deterministic fixture
+6. 완료: calendar-week median, MAD=0 `UNSCORABLE`, 결측 주 연속 판정 수정
+7. 남음: cough 30/hard-negative 30 validation과 iPhone fixture threshold freeze
+8. production 후속: 별도 Redis worker/queue와 model artifact checksum
 
 ## 참고
 

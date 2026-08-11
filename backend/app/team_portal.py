@@ -8,11 +8,12 @@ from app.config import Settings
 
 FEATURES = [
     ("AI-1 · STT", "완료", "Deepgram Nova-3 한국어 실호출과 Track Egress E2E 검증"),
-    ("AI-1 · LLM", "완료", "Gemini structured output 실호출과 truncation 방어"),
-    ("되묻기 감지", "설계", "규칙 기반 event 탐지·중복 병합·통화별 집계 구현 예정"),
-    ("AI-2 · 음향", "설계", "발화 속도·휴지 비율·F0 변동·기침 event 구현 예정"),
+    ("AI-1 · LLM", "완료", "부모-only 근거 segment·polarity·semantic validator"),
+    ("되묻기 감지", "완료", "한국어 규칙·제외 규칙·3초 병합·통화/리포트 집계"),
+    ("AI-2 · 음향", "Prototype", "word timing·pYIN·기침 후보 transient 실제 계산"),
     ("백엔드", "Prototype", "인증·동의·통화·분석·리포트 API와 원본 폐기"),
     ("iOS/APNs", "대기", "Swift 앱과 Apple sandbox 실기기 E2E 필요"),
+    ("연결 질문 TTS", "계약 완료", "Deepgram 한국어 미지원 → iOS ko-KR 로컬 TTS"),
 ]
 
 
@@ -44,11 +45,16 @@ def build_team_status(settings: Settings) -> dict[str, Any]:
             },
             "livekit": {"configured": livekit_ready, "mode": "self-hosted"},
             "apnsVoip": {"configured": apns_ready, "enabled": settings.apns_voip_enabled},
+            "questionTts": {
+                "configured": True,
+                "mode": "ios-local",
+                "language": "ko-KR",
+                "deepgramKoreanSupported": False,
+            },
             "storage": {"backend": settings.storage_backend},
         },
         "features": [
-            {"name": name, "status": status, "detail": detail}
-            for name, status, detail in FEATURES
+            {"name": name, "status": status, "detail": detail} for name, status, detail in FEATURES
         ],
         "links": {
             "swagger": "/docs",
@@ -59,8 +65,7 @@ def build_team_status(settings: Settings) -> dict[str, Any]:
                 "/blob/main/backend/docs/ai-transcript-design.md"
             ),
             "acousticDesign": (
-                f"{settings.team_portal_repository_url}"
-                "/blob/main/backend/docs/acoustic-design.md"
+                f"{settings.team_portal_repository_url}/blob/main/backend/docs/acoustic-design.md"
             ),
         },
     }
@@ -76,9 +81,9 @@ def render_team_portal(settings: Settings) -> str:
     feature_cards = "".join(
         f"""
         <article class="feature-card">
-          <div class="feature-top"><h3>{escape(item['name'])}</h3>
-            <span class="badge">{escape(item['status'])}</span></div>
-          <p>{escape(item['detail'])}</p>
+          <div class="feature-top"><h3>{escape(item["name"])}</h3>
+            <span class="badge">{escape(item["status"])}</span></div>
+          <p>{escape(item["detail"])}</p>
         </article>
         """
         for item in status["features"]
@@ -112,6 +117,12 @@ def render_team_portal(settings: Settings) -> str:
                 "PushKit + CallKit 실기기",
                 readiness(providers["apnsVoip"]["configured"]),
                 "ready" if providers["apnsVoip"]["configured"] else "waiting",
+            ),
+            (
+                "질문 TTS",
+                "iOS AVSpeechSynthesizer · ko-KR",
+                "로컬 사용",
+                "ready",
             ),
         )
     )
@@ -182,12 +193,12 @@ def render_team_portal(settings: Settings) -> str:
     <p>콜록의 현재 연결 상태, 구현 범위와 다음 설계를 한 화면에서 공유합니다.
       이 페이지는 실제 백엔드가 렌더링하며 30초마다 새로고침됩니다.</p>
     <div class="live"><span class="dot"></span>
-      Backend connected · {escape(status['environment'])}</div>
+      Backend connected · {escape(status["environment"])}</div>
     <nav class="actions" aria-label="개발 문서">
-      <a class="primary" href="{escape(links['swagger'])}">Swagger API</a>
-      <a href="{escape(links['handoff'])}">HANDOFF</a>
-      <a href="{escape(links['transcriptDesign'])}">AI-1 설계</a>
-      <a href="{escape(links['acousticDesign'])}">AI-2 설계</a>
+      <a class="primary" href="{escape(links["swagger"])}">Swagger API</a>
+      <a href="{escape(links["handoff"])}">HANDOFF</a>
+      <a href="{escape(links["transcriptDesign"])}">AI-1 설계</a>
+      <a href="{escape(links["acousticDesign"])}">AI-2 설계</a>
     </nav>
   </header>
   <section><h2>구현 트랙</h2><div class="grid">{feature_cards}</div></section>

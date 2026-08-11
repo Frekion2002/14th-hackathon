@@ -87,6 +87,8 @@ async def test_gemini_uses_safe_output_budget(monkeypatch: pytest.MonkeyPatch) -
     async def fake_request(client: httpx.AsyncClient, method: str, url: str, **kwargs):
         del client, method, url
         captured["body"] = kwargs["json"]
+        captured["headers"] = kwargs["headers"]
+        captured["params"] = kwargs.get("params")
         return httpx.Response(
             200,
             json={
@@ -98,10 +100,14 @@ async def test_gemini_uses_safe_output_budget(monkeypatch: pytest.MonkeyPatch) -
                                 {
                                     "text": json.dumps(
                                         {
-                                            "symptom": "기침함",
-                                            "medication": None,
-                                            "activity": None,
-                                            "sleep": None,
+                                            "facts": [
+                                                {
+                                                    "category": "symptom",
+                                                    "summary": "기침함",
+                                                    "polarity": "PRESENT",
+                                                    "evidenceSegmentIds": ["s0000"],
+                                                }
+                                            ]
                                         }
                                     )
                                 }
@@ -124,7 +130,11 @@ async def test_gemini_uses_safe_output_budget(monkeypatch: pytest.MonkeyPatch) -
     result = await gateway.extract("기침했어")
 
     assert result.symptom == "기침함"
+    assert result.facts[0].evidence_segment_ids == ["s0000"]
     assert captured["body"]["generationConfig"]["maxOutputTokens"] == 2048
+    assert "segments" in captured["body"]["contents"][0]["parts"][0]["text"]
+    assert captured["headers"] == {"x-goog-api-key": "test"}
+    assert captured["params"] is None
 
 
 async def test_gemini_reports_truncated_response(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,9 +153,7 @@ async def test_gemini_reports_truncated_response(monkeypatch: pytest.MonkeyPatch
         )
 
     monkeypatch.setattr("app.services.gemini.request_with_retry", fake_request)
-    gateway = GeminiExtractionGateway(
-        Settings(mock_external_services=False, gemini_api_key="test")
-    )
+    gateway = GeminiExtractionGateway(Settings(mock_external_services=False, gemini_api_key="test"))
 
     with pytest.raises(ExtractionError, match="finishReason=MAX_TOKENS"):
         await gateway.extract("기침했어")

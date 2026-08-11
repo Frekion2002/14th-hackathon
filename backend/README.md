@@ -11,14 +11,17 @@ Gemini 건강 대화 구조화 파이프라인이다.
 - iOS PushKit VoIP 푸시와 CallKit 수신 통화용 APNs provider
 - 부모 기기 분석용 PCM 파일의 presigned upload
 - Deepgram `nova-3`, `language=ko` 사전 녹음 STT
-- Gemini JSON Schema 기반 증상·복약·활동·수면 추출
+- Gemini parent-only evidence JSON 기반 증상·복약·활동·수면 추출과 polarity/근거 저장
+- 부모 utterance의 되묻는 표현 규칙 탐지, 3초 병합, 통화·리포트 집계
+- Deepgram word timing 발화 속도/휴지와 PCM pYIN F0/기침 후보 transient 분석
 - 부모 발화 20초 미만 제외, 오디오 분석 직후 폐기, 실패 파일 24시간 내 폐기
 - 앵커/롤링 기준선, MAD robust z, 변화 신호, immutable 리포트 스냅샷 API
 - 모바일 브라우저와 Swift `WKWebView`에서 여는 팀 상태 포털
 
-음향 지표 4종은 API와 파이프라인 경계까지 연결되어 있지만 아직 검증된 분석기가 선택되지
-않았다. 임의의 숫자로 개인 기준선을 오염시키지 않도록 현재는 네 지표 모두 명시적인
-`UNMEASURABLE / EXTRACTION_ERROR`로 저장한 뒤 원시 음성을 폐기한다.
+음향 지표 4종은 실제 값을 계산한다. 다만 기침은 의료용 분류가 아니라 versioned
+`transient-heuristic-v1` 후보 detector이며 실제 cough/hard-negative validation 전까지 UI에서
+확정 기침이나 질환 신호로 표현하면 안 된다. PCM 품질이나 word timing이 부족하면 관련 값은
+명시적인 `UNMEASURABLE` 사유와 함께 저장된다.
 
 ## 빠른 로컬 실행 — API만
 
@@ -98,9 +101,11 @@ TLS/TURN을 앞단에 구성해야 한다.
 4. 부모 앱은 LiveKit `LocalAudioTrack.add(audioRenderer:)`에서 동일 캡처 스트림의 PCM을
    파일로 기록한다. 별도 `AVAudioEngine`으로 마이크를 두 번 열지 않는다.
 5. 통화 종료 후 Egress 웹훅과 분석용 PCM 완료 이벤트를 모두 기다린다.
-6. 화자별 OGG를 Deepgram Nova-3 한국어 모델에 보내고 시간순으로 합친다.
-7. 부모 발화가 20초 이상이면 Gemini가 네 항목을 JSON으로 추출한다.
-8. 음향 분석 포트를 실행하고 기준선·변화 신호·리포트를 갱신한다.
+6. 화자별 OGG를 Deepgram Nova-3 한국어 모델에 보내 word/utterance timing과 함께 합친다.
+7. 되묻기 규칙 detector를 실행하고, 부모 발화가 20초 이상이면 Gemini가 부모 segment 근거가
+   있는 네 항목을 JSON으로 추출한다.
+8. word timing과 iOS 16-bit PCM WAV로 음향 4종을 계산하고 calendar-week 기준선·변화
+   신호·리포트를 갱신한다.
 9. 성공·제외·실패 여부와 관계없이 원본 파일을 폐기하고 폐기 시각을 남긴다.
 
 ## iOS 수신 통화
@@ -128,6 +133,10 @@ APNs가 꺼져 있거나 부모 기기에 `voipToken`이 없으면 foreground-on
 Gemini는 말하지 않은 원인을 추론하지 않으며 질환명, 위험군 라벨, 응급도, 치료 지시를
 생성하지 않도록 시스템 지시와 응답 스키마로 제한한다.
 
+연결 대기 질문은 Deepgram TTS가 아니라 iOS `AVSpeechSynthesizer(ko-KR)`로 발신자에게만
+재생한다. Deepgram Aura TTS는 현재 한국어를 지원하지 않으며, API는 각 질문에
+`ttsMode=IOS_LOCAL`을 반환한다.
+
 > Gemini 무료 티어는 해커톤의 더미 데이터에만 사용한다. 무료 티어 입력은 Google 제품
 > 개선에 사용될 수 있으므로 실제 건강정보를 처리하는 운영 환경에서는 데이터 비학습 조건의
 > 유료 계약 또는 별도의 보호된 모델 엔드포인트로 전환해야 한다.
@@ -140,9 +149,19 @@ uv run pytest -q
 docker compose config --quiet
 ```
 
+LLM eval은 건강정보가 아닌 고정 더미 fixture만 사용한다.
+
+```bash
+uv run python scripts/evaluate_extraction.py --provider mock
+# free tier quota에 맞춰 5개씩 나누는 예시
+uv run python scripts/evaluate_extraction.py --provider gemini --start 0 --limit 5 --delay 13
+```
+
 테스트는 초대→동의→질환 프로필→통화→이중 업로드→STT/LLM→폐기→리포트 전체 흐름과
-Deepgram 응답 정규화, Gemini 출력 truncation 방지, LiveKit Track Egress 요청·웹훅,
-APNs VoIP 요청 헤더·payload를 포함한다.
+Deepgram word timing 정규화, Gemini 부모 근거 semantic validation/키 redaction, 되묻기 규칙,
+실제 WAV 음향 4종, calendar-week 기준선, LiveKit Track Egress 요청·웹훅, APNs VoIP 요청
+헤더·payload를 포함한다. `evals/extraction_cases.json`의 40개 더미 prompt suite는
+`scripts/evaluate_extraction.py`로 mock 또는 실제 Gemini에서 반복 평가한다.
 
 전체 작업 상태와 파일별 역할, 다음 작업은 [`HANDOFF.md`](../HANDOFF.md)를 기준으로 관리한다.
 AI-1 prompt/되묻기 설계는 [`docs/ai-transcript-design.md`](docs/ai-transcript-design.md), 실제

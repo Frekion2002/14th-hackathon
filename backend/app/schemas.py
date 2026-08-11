@@ -91,6 +91,7 @@ class QuestionView(ApiModel):
     condition_code: str | None
     tts_asset_url: str | None
     duration_ms: int | None
+    tts_mode: Literal["IOS_LOCAL", "REMOTE_ASSET"] = "IOS_LOCAL"
 
 
 class AudioConstraints(ApiModel):
@@ -153,10 +154,22 @@ class CallView(ApiModel):
 
 
 class TranscriptSegment(ApiModel):
+    segment_id: str
     speaker: Literal["PARENT", "CHILD"]
     start_ms: int
     end_ms: int
     text: str
+    words: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RepeatEventView(ApiModel):
+    start_ms: int
+    end_ms: int
+    category: Literal["REPEAT_REQUEST", "HEARING_DIFFICULTY", "CLARIFICATION"]
+    matched_text: str
+    rule_id: str
+    confidence: float
+    rule_version: str
 
 
 class TranscriptView(ApiModel):
@@ -166,6 +179,18 @@ class TranscriptView(ApiModel):
     exclusion_reason: str | None
     parent_speech_sec: int
     segments: list[TranscriptSegment]
+    repeat_events: list[RepeatEventView] = Field(default_factory=list)
+    repeat_request_count: int = 0
+    repeat_requests_per_minute: float = 0
+
+
+class ExtractionFact(ApiModel):
+    category: Literal["symptom", "medication", "activity", "sleep"] = Field(
+        description="허용된 건강 대화 범주"
+    )
+    summary: str = Field(min_length=1, max_length=240, description="부모 진술의 중립적 요약")
+    polarity: Literal["PRESENT", "ABSENT", "UNCERTAIN"]
+    evidence_segment_ids: list[str] = Field(min_length=1, description="근거가 된 PARENT segment ID")
 
 
 class ExtractionPayload(ApiModel):
@@ -173,6 +198,15 @@ class ExtractionPayload(ApiModel):
     medication: str | None = Field(default=None, description="복약 여부나 변화")
     activity: str | None = Field(default=None, description="활동량이나 일상 활동")
     sleep: str | None = Field(default=None, description="수면 상태나 변화")
+    facts: list[ExtractionFact] = Field(default_factory=list)
+
+
+class GeminiExtractionResponse(ApiModel):
+    facts: list[ExtractionFact] = Field(
+        default_factory=list,
+        max_length=4,
+        description="범주별 최대 한 건, 근거가 없으면 빈 배열",
+    )
 
 
 class ExtractionView(ExtractionPayload):
@@ -201,7 +235,7 @@ class BaselineView(ApiModel):
     metric: Metric | str
     time_slot: TimeSlot | str
     kind: BaselineKind | str
-    status: Literal["COLLECTING", "READY"]
+    status: Literal["COLLECTING", "READY", "UNSCORABLE"]
     sample_count: int
     required_count: int
     remaining_calls: int | None
@@ -240,6 +274,7 @@ class ReportView(ApiModel):
     promoted_signals: list[dict[str, Any]]
     acute_signals: list[dict[str, Any]]
     conversation_items: dict[str, list[str]]
+    repeat_observation: dict[str, Any]
     acoustic_trends: list[dict[str, Any]]
     analyzed_call_count: int
     issued_at: datetime

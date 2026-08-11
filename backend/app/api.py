@@ -22,6 +22,7 @@ from sqlalchemy import func, select
 
 from app.config import Settings
 from app.models import (
+    AcousticAnalysisRun,
     AcousticFeature,
     AssetKind,
     AssetStatus,
@@ -33,12 +34,14 @@ from app.models import (
     ConsentDecision,
     ConsentRecord,
     Device,
+    ExtractionEvidence,
     Family,
     FamilyMember,
     HealthExtraction,
     Invitation,
     OtpChallenge,
     ParentProfile,
+    RepeatEvent,
     TimeSlot,
     Transcript,
     User,
@@ -72,6 +75,7 @@ from app.services.domain import (
 from app.services.livekit import LiveKitError
 from app.services.notifications import IncomingCallPush, PushNotificationError
 from app.services.questions import daily_questions
+from app.services.repeat_detector import repeat_rate_per_minute
 from app.services.signals import baseline_to_dict, signal_to_dict
 from app.services.storage import LocalStorage
 
@@ -844,6 +848,11 @@ async def get_transcript(
     item = await session.scalar(select(Transcript).where(Transcript.call_id == call_id))
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "전사 결과가 아직 없습니다")
+    repeat_events = list(
+        await session.scalars(
+            select(RepeatEvent).where(RepeatEvent.call_id == call_id).order_by(RepeatEvent.start_ms)
+        )
+    )
     return {
         "callId": call_id,
         "provider": item.provider,
@@ -851,6 +860,22 @@ async def get_transcript(
         "exclusionReason": item.exclusion_reason,
         "parentSpeechSec": item.parent_speech_sec,
         "segments": item.segments,
+        "repeatEvents": [
+            {
+                "startMs": event.start_ms,
+                "endMs": event.end_ms,
+                "category": event.category,
+                "matchedText": event.matched_text,
+                "ruleId": event.rule_id,
+                "confidence": event.confidence,
+                "ruleVersion": event.rule_version,
+            }
+            for event in repeat_events
+        ],
+        "repeatRequestCount": len(repeat_events),
+        "repeatRequestsPerMinute": repeat_rate_per_minute(
+            len(repeat_events), item.parent_speech_sec
+        ),
     }
 
 
@@ -867,6 +892,9 @@ async def get_extraction(
     item = await session.scalar(select(HealthExtraction).where(HealthExtraction.call_id == call_id))
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "추출 결과가 아직 없습니다")
+    evidence = await session.scalar(
+        select(ExtractionEvidence).where(ExtractionEvidence.call_id == call_id)
+    )
     return {
         "callId": call_id,
         "parseStatus": item.parse_status,
@@ -874,6 +902,8 @@ async def get_extraction(
         "medication": item.medication,
         "activity": item.activity,
         "sleep": item.sleep,
+        "facts": evidence.facts if evidence else [],
+        "schemaVersion": evidence.schema_version if evidence else "v1",
         "rawTranscript": item.raw_transcript,
     }
 
@@ -893,9 +923,14 @@ async def get_acoustic_features(
     )
     if not items:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "음향 분석 결과가 아직 없습니다")
+    analysis_run = await session.scalar(
+        select(AcousticAnalysisRun).where(AcousticAnalysisRun.call_id == call_id)
+    )
     return {
         "callId": call_id,
         "audioSource": items[0].audio_source,
+        "analyzerVersion": analysis_run.analyzer_version if analysis_run else None,
+        "coughDetectorVersion": analysis_run.cough_detector_version if analysis_run else None,
         "features": [
             {
                 "metric": item.metric,

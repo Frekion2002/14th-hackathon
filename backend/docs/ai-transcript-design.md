@@ -1,6 +1,6 @@
 # AI-1 전사·LLM·되묻기 탐지 설계
 
-상태: 설계 확정, 되묻기 탐지와 prompt v2는 아직 미구현
+상태: prompt v2·semantic validator·되묻기 detector 구현 완료, 전체 provider eval 진행 중
 
 ## 1. LLM은 어디에 있고 latency가 중요한가
 
@@ -25,7 +25,8 @@ Gemini는 통화 연결, TTS 질문 재생, LiveKit join, 수신 수락 경로�
 
 ## 2. 현재 prompt에서 보강할 부분
 
-현재 prompt는 진단·원인 추론·치료 지시를 금지하지만 다음 경계가 약하다.
+초기 prompt는 진단·원인 추론·치료 지시를 금지했지만 다음 경계가 약했고, 현재 v2에서
+보강했다.
 
 1. 자녀가 질문한 내용을 부모가 실제로 겪은 사실로 잘못 추출할 수 있다.
 2. “열은 없어” 같은 부정과 “기침 때문에 깼어” 같은 현재 증상을 분리하지 않는다.
@@ -69,7 +70,7 @@ validation이 별도로 필요하다고 안내한다.
 }
 ```
 
-중기 schema v2는 내부적으로 각 사실의 `polarity`와 `evidenceSegmentIds`를 보관한다. 기존
+schema v2는 내부적으로 각 사실의 `polarity`와 `evidenceSegmentIds`를 보관한다. 기존
 클라이언트에는 네 summary 필드를 계속 제공한다.
 
 ```text
@@ -94,6 +95,16 @@ prompt 문구를 감으로 바꾸지 않고 최소 40개 더미 통화 fixture�
 - 허용되지 않은 질환·위험·치료 문구 0건
 - schema 및 semantic validator 통과율 99% 이상
 - 동일 fixture를 3회 실행했을 때 category/polarity 일치율 95% 이상
+
+구현 파일은 `evals/extraction_cases.json`(40개 더미 사례)과
+`scripts/evaluate_extraction.py`다. 2026-08-11 실제 `gemini-3.6-flash`가 처리한 7건은 7/7
+통과했다. 나머지 33건은 13초 간격에도 free-tier quota로 provider 요청 자체가 실패했으므로
+전체 40건 합격이나 오답으로 기록하지 않는다. 스크립트는 `evaluated/accuracy`와
+`providerFailureCount`를 분리하며 `--start`, `--limit`, `--delay`로 나눠 반복할 수 있다.
+
+application validator는 evidence ID가 PARENT segment인지 확인하고, 부모 근거 문장에 해당
+범주의 구체 어휘가 없는 fact를 제거한다. 그래서 자녀의 “무릎이 아프세요?” 뒤 부모가 “아니,
+괜찮아”만 답한 경우 model이 만든 “무릎 통증 없음”은 저장되지 않는다.
 
 ## 5. 되묻는 표현은 LLM을 사용하지 않는다
 
@@ -137,13 +148,13 @@ Transcript.repeatRequestsPerMinute
 리포트 문구는 “되묻는 표현 3회”까지만 허용한다. “청력 저하”, “인지 저하” 같은 원인이나
 진단을 출력하지 않는다. 기준선 비교도 동일인의 과거 빈도 변화로만 수행한다.
 
-### 구현 순서
+### 구현 상태
 
-1. `services/repeat_detector.py` pure function과 30개 한국어 unit fixture
-2. Transcript JSON/집계 column 추가
-3. STT 직후 pipeline에 detector 연결
-4. `/calls/{id}/transcript`와 report response에 count/event 추가
-5. false positive 검수 후 rule version을 결과에 함께 저장
+1. `services/repeat_detector.py` pure function과 한국어 positive/negative fixture 구현
+2. 새 `repeat_events` table에 원문·시각·rule/confidence/version 저장
+3. STT 직후 pipeline 연결
+4. transcript API에 event/count/분당 빈도, report에 관찰 집계 추가
+5. 다음 단계는 실통화 false-positive 검수와 rule version 갱신
 
 ## 참고
 

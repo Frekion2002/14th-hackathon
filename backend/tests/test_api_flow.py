@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import io
+import math
+import wave
+from array import array
 from urllib.parse import urlsplit
 
 from fastapi.testclient import TestClient
@@ -7,6 +11,23 @@ from sqlalchemy import select
 
 from app.models import AssetKind, AudioAsset
 from tests.conftest import auth, create_user
+
+
+def tone_wav(seconds: float = 6, sample_rate: int = 16_000, frequency: float = 150) -> bytes:
+    samples = array(
+        "h",
+        (
+            round(0.2 * 32767 * math.sin(2 * math.pi * frequency * index / sample_rate))
+            for index in range(round(seconds * sample_rate))
+        ),
+    )
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(samples.tobytes())
+    return output.getvalue()
 
 
 def onboard_family(client: TestClient):
@@ -137,11 +158,11 @@ def test_complete_call_pipeline(client: TestClient) -> None:
     upload = client.post(
         f"/v1/calls/{call_id}/raw-audio/upload-url",
         headers=auth(parent_token),
-        json={"contentType": "audio/wav", "durationSec": 45, "sampleRate": 48000},
+        json={"contentType": "audio/wav", "durationSec": 6, "sampleRate": 16000},
     )
     assert upload.status_code == 200, upload.text
     parsed = urlsplit(upload.json()["uploadUrl"])
-    uploaded = client.put(parsed.path + "?" + parsed.query, content=b"fake-wave")
+    uploaded = client.put(parsed.path + "?" + parsed.query, content=tone_wav())
     assert uploaded.status_code == 204, uploaded.text
     completed = client.post(
         f"/v1/calls/{call_id}/raw-audio/complete",
@@ -200,11 +221,14 @@ def test_complete_call_pipeline(client: TestClient) -> None:
     assert extraction.json()["medication"] is not None
     assert extraction.json()["activity"] is not None
     assert extraction.json()["sleep"] is not None
+    assert extraction.json()["schemaVersion"] == "v2"
+    assert all(item["evidenceSegmentIds"] for item in extraction.json()["facts"])
 
     acoustics = client.get(f"/v1/calls/{call_id}/acoustic-features", headers=auth(child_token))
     assert acoustics.status_code == 200
     assert len(acoustics.json()["features"]) == 4
-    assert {item["status"] for item in acoustics.json()["features"]} == {"UNMEASURABLE"}
+    assert {item["status"] for item in acoustics.json()["features"]} == {"OK"}
+    assert acoustics.json()["analyzerVersion"] == "collog-acoustic-v1"
 
     report = client.get(
         f"/v1/parents/{parent['id']}/reports?period=WEEKLY", headers=auth(child_token)
@@ -212,6 +236,7 @@ def test_complete_call_pipeline(client: TestClient) -> None:
     assert report.status_code == 200, report.text
     assert report.json()["disclaimer"]
     assert report.json()["analyzedCallCount"] == 1
+    assert report.json()["repeatObservation"]["count"] == 0
 
 
 def test_track_published_webhook_starts_late_parent_egress(client: TestClient) -> None:
@@ -284,5 +309,11 @@ def test_team_portal_is_mobile_ready_and_never_exposes_secrets(client: TestClien
     payload = status.json()
     assert payload["status"] == "ok"
     assert payload["providers"]["livekit"]["mode"] == "self-hosted"
+    assert payload["providers"]["questionTts"] == {
+        "configured": True,
+        "mode": "ios-local",
+        "language": "ko-KR",
+        "deepgramKoreanSupported": False,
+    }
     assert "apiKey" not in status.text
     assert "secret" not in status.text.lower()

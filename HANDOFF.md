@@ -68,6 +68,8 @@
 | 오디오 저장 | 로컬 또는 S3 호환 MinIO |
 | STT | Deepgram API, `nova-3`, `language=ko` |
 | LLM | Gemini API structured output, 기본 `gemini-3.6-flash` |
+| 연결 질문 TTS | Deepgram은 한국어 TTS 미지원. iOS `AVSpeechSynthesizer(ko-KR)` 로컬 재생 |
+| 음향 분석 | Deepgram word timing + `librosa.pyin` + versioned transient 후보 detector |
 | 배포 스택 | Docker Compose: backend/Postgres/Redis/MinIO/LiveKit/Egress |
 
 ## 3. 현재 구현 상태
@@ -77,16 +79,15 @@
 | 트랙 | 판정 | 현재 상태 |
 |---|---|---|
 | AI-1 Deepgram STT | 연동·실호출 검증 완료 | Nova-3 한국어 요청/응답 정규화 완료. 합성 한국어와 실제 Track Egress OGG를 API로 전사해 E2E 성공 |
-| AI-1 LLM 항목 추출(P0-5) | 연동·실호출 검증 완료 | Gemini JSON Schema로 증상·복약·활동·수면 추출. 실제 API E2E 성공, thinking token truncation 방지 적용 |
-| AI-1 되묻는 표현 탐지 | 설계 완료·미구현 | 부모 utterance 규칙 탐지, 3초 event 병합, 분당 빈도와 API schema를 `ai-transcript-design.md`에 확정 |
-| AI-2 음향 지표 4종(P0-16) | 설계 완료·미구현 | 지표 정의·품질 gate·Silero/pYIN/YAMNet·worker/검증 기준 확정. 현재 analyzer는 계속 `UNMEASURABLE` |
-| AI-2 기준선·robust Z(P0-14/P0-6) | 계산 골격 구현, 보정·검증 필요 | median/MAD, anchor/rolling, 동일 time slot, 현재값 제외는 구현. 실제 음향값 E2E test가 없음 |
+| AI-1 LLM 항목 추출(P0-5) | 구현·실호출 검증 완료 | 부모-only segment JSON, polarity/evidence, grounding validator. 실제 처리 7건은 7/7; 나머지 33건은 free-tier quota로 미평가 |
+| AI-1 되묻는 표현 탐지 | 구현 완료 | 부모 utterance 한국어 규칙/제외, 3초 병합, rule version, 분당 빈도, transcript/report API |
+| AI-2 음향 지표 4종(P0-16) | hackathon prototype 완료 | word timing 속도/휴지, PCM pYIN F0, `transient-heuristic-v1` 기침 후보. labeled validation은 남음 |
+| AI-2 기준선·robust Z(P0-14/P0-6) | 구현·fixture 검증 완료 | ISO calendar-week median, 4개 주, 현재값 제외, MAD=0 UNSCORABLE, 결측 주 연속 중단 |
 | 백엔드 P0 API | prototype 완료 | 인증·초대·동의·통화·LiveKit·리포트·정리 loop 구현. 운영용 SMS/worker/migration/실배포 검증은 별도 |
 
-따라서 “키만 준비되면 전부 완료” 상태는 아니다. 현재 키를 넣은 AI-1 STT/LLM과 self-hosted
-통화 pipeline의 합성 음원 E2E까지는 검증됐다. 그러나 되묻는 표현 탐지와 음향 지표 추출기는
-추가 구현이 필요하다. 음향값이 없으므로 현재 기준선·signal·리포트의 음향 변화 경로도 실제
-데이터로 동작하지 않는다.
+백엔드/AI 해커톤 prototype의 미구현 코드는 크게 줄었다. 남은 핵심은 기침 후보 detector의
+labeled precision 검증, Swift 앱 구현, APNs/실제 iPhone 양단 통화와 PCM E2E다. 현재 음향값은
+fixture에서 실제 계산되고 기준선까지 흐르지만 기침 수치를 의료 검증값으로 소개하면 안 된다.
 
 ### 완료
 
@@ -97,26 +98,28 @@
 - self-hosted LiveKit room/token, 부모·자녀 Track Egress, webhook 서명 검증
 - S3/MinIO presigned upload와 로컬 signed upload fallback
 - Egress와 분석용 PCM 도착을 모두 기다리는 처리 파이프라인
-- Deepgram Nova-3 한국어 STT adapter와 화자별 segment 정규화
-- Gemini JSON Schema 추출과 진단/치료 추론 방지 시스템 지시
+- Deepgram Nova-3 한국어 STT adapter, utterance/word timing과 segment ID 보존
+- Gemini parent-only fact/polarity/evidence JSON, category grounding validator, key header/redaction
+- 40개 더미 prompt eval suite와 실제 모델 분할 실행 스크립트
+- 한국어 되묻기 규칙·제외·3초 병합, 새 event table과 transcript/report 집계
+- 실제 16-bit PCM loader/품질 gate, speech rate/pause/pYIN F0/기침 후보 4종 계산
 - 부모 발화 20초 미만 분석 제외
 - 성공/제외/실패 모두 원본 오디오 즉시 폐기, 실패 잔존 파일 24시간 purge
-- anchor/rolling baseline, median/MAD robust z, 변화 signal 계산 골격, report snapshot
+- calendar-week anchor/rolling baseline, median/MAD robust z, 결측 주 signal, report snapshot
 - iOS PushKit용 APNs HTTP/2 provider와 `/devices` idempotent 등록
 - PushKit → CallKit → `/accept` → LiveKit iOS 계약 문서
 - `/team` 모바일 웹 포털과 `/team/status.json` 비밀값 없는 연동 상태 endpoint
-- LLM prompt v2·되묻기 detector와 AI-2 음향 지표 4종 구현 설계
+- 연결 대기 질문 `ttsMode=IOS_LOCAL` 계약과 Swift `AVSpeechSynthesizer(ko-KR)` 예제
 
 ### 의도적으로 미완료
 
-- 음향 분석기의 실제 알고리즘. 현재 4종 지표를 가짜 수치로 채우지 않고
-  `UNMEASURABLE / EXTRACTION_ERROR`로 저장한다.
-- 전사 결과의 되묻는 표현 사전 탐지·정규화·통화별 집계.
-- `4주 연속` 판정은 현재 서로 다른 calendar week가 아니라 같은 방향의 이전 signal 횟수를
-  누적한다. 주 단위 중복 제거와 결측 주 처리 규칙을 확정하고 수정해야 한다.
-- robust Z와 anchor/rolling 계산의 실제 음향 fixture 단위/E2E test.
+- 기침 후보 detector는 범용 transient heuristic이다. cough 30개/hard negative 30개로
+  precision 0.85 이상을 확인하지 않았으며 실패하면 검증된 classifier로 교체한다.
+- 전체 40-case 실제 Gemini eval. provider가 처리한 7건은 7/7, 나머지 33건은 free-tier quota로
+  요청 자체가 실패해 미평가다.
 - SMS OTP 실제 발송 provider. 개발 OTP는 `000000`이다.
-- 질문 TTS asset 생성. 현재 `ttsAssetUrl`은 `null`이고 iOS 로컬 TTS fallback이 필요하다.
+- server TTS asset은 없다. 한국어 질문은 의도적으로 iOS 로컬 TTS이며 Swift 구현/실기기
+  수락 즉시 중단 검증이 남았다.
 - APNs 실기기 E2E. provider 코드는 구현했지만 Apple 계정 식별자와 `.p8`, 실제 iPhone으로
   검증해야 한다.
 - Swift 앱 자체. 현재는 서버 계약과 연동 문서만 있으며 Xcode project는 아직 없다.
@@ -142,7 +145,7 @@
    │                    │                          │  PCM renderer 기록 │
    │ POST /end ────────>│ stop Egress             │<─ upload PCM ──────┤
    │                    │<─ egress_ended webhook ─┤                    │
-   │                    ├─ STT → LLM → acoustics → baseline/report     │
+   │                    ├─ STT → repeat/LLM → acoustics → report       │
    │                    └─ 모든 원본 오디오 purge                      │
 ```
 
@@ -180,13 +183,14 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `services/livekit.py` | self-host LiveKit room/token/audio-track 조회/Track Egress/webhook adapter와 mock |
 | `services/notifications.py` | APNs ES256 provider JWT와 HTTP/2 VoIP push, mock/disabled adapter |
 | `services/storage.py` | 로컬/S3 저장, presigned upload/read/delete |
-| `services/deepgram.py` | Nova-3 prerecorded STT 요청과 segment/speech-time 정규화 |
-| `services/gemini.py` | JSON Schema 기반 4개 건강 대화 항목 구조화 |
-| `services/acoustics.py` | 실제 분석기를 교체할 port와 안전한 unconfigured 구현 |
+| `services/deepgram.py` | Nova-3 STT와 utterance/word timing/segment 정규화 |
+| `services/gemini.py` | 부모-only fact/polarity/evidence output와 semantic validator |
+| `services/repeat_detector.py` | 설명 가능한 한국어 되묻기 규칙·제외·3초 event 병합 |
+| `services/acoustics.py` | PCM loader/품질 gate/속도/휴지/pYIN F0/transient 기침 후보 분석 |
 | `services/pipeline.py` | 입력 대기→STT→LLM→음향→signal→purge orchestration |
-| `services/signals.py` | anchor/rolling 기준선, MAD 비교, 연속 signal 계산 |
-| `services/reports.py` | 주간/월간 report snapshot 생성 |
-| `services/questions.py` | 질환별 질문 pool과 선택 |
+| `services/signals.py` | 주별 anchor/rolling 기준선, MAD 비교, 결측 주 연속 signal 계산 |
+| `services/reports.py` | 주간/월간 report와 되묻기 관찰 snapshot 생성 |
+| `services/questions.py` | 질환별 질문 pool, 선택, iOS local TTS mode |
 | `services/domain.py` | 가족 접근, 동의, 초대 상태 공통 규칙 |
 | `services/http.py` | Deepgram/Gemini transient retry helper |
 
@@ -202,8 +206,11 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/docs/ios-call-flow.md` | Swift PushKit/CallKit/LiveKit/PCM 구현 계약 |
 | `backend/docs/ai-transcript-design.md` | LLM 위치/prompt v2/eval과 되묻기 규칙 detector 설계 |
 | `backend/docs/acoustic-design.md` | 음향 4종 정의, 품질 gate, model, worker와 검증 기준 |
+| `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
+| `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/tests/test_api_flow.py` | 온보딩부터 분석·폐기·리포트까지 E2E API test |
 | `backend/tests/test_providers.py` | Deepgram/Gemini/APNs provider unit test |
+| `backend/tests/test_ai_pipeline.py` | prompt/repeat/acoustic/calendar-week deterministic test |
 | `backend/tests/conftest.py` | 격리 SQLite와 mock provider test app fixture |
 | `backend/pyproject.toml` | Python 의존성, ruff/pytest/build 설정 |
 | `backend/uv.lock` | 재현 가능한 dependency lock |
@@ -232,14 +239,21 @@ docker compose config --quiet
 2026-08-11 마지막 검증 결과:
 
 - `uv run ruff check .`: 통과
-- `uv run pytest -q`: 13 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
+- `uv run pytest -q`: 38 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
 - `uv build`: wheel/sdist 생성 성공
 - generated OpenAPI: 27 paths / 28 operations
 - `docker-compose.yml`, `deploy/livekit.yaml`, `deploy/egress.yaml`: YAML parse 통과
 - Docker Compose 5.4.0 + Colima arm64에서 Postgres/Redis/MinIO/LiveKit/Egress/backend 전체
-  stack 기동 및 health 확인
+  stack을 새 librosa/numpy image로 재빌드·기동하고 health/container import 확인
+- 기존 PostgreSQL volume에 새 `repeat_events`, `extraction_evidence`,
+  `acoustic_analysis_runs` table 자동 생성 확인
 - Deepgram 실제 key: macOS 한국어 합성 WAV를 `nova-3`, `language=ko`로 전사 성공
 - Gemini 실제 key: `gemini-3.6-flash` structured JSON 추출 성공
+- Gemini prompt v2 실제 더미 중 provider 처리 7건은 7/7. 나머지 33건은 13초 간격에도
+  free-tier quota로 요청 실패하여 전체 40건 점수로 기록하지 않음
+- 동일 40-case suite의 deterministic mock regression은 40/40 통과
+- 실제 iOS 형식 48 kHz PCM resample/sine/known pause fixture에서 음향 4종 OK, 16 kHz 분리
+  transient 2개를 기침 후보 2개로 계산. invalid WAV/sample-rate/MAD=0/결측 주 test 통과
 - 실제 통합 smoke: LiveKit CLI로 자녀 30.4초/부모 42.4초 Opus track publish → 분리 Track
   Egress → MinIO → Deepgram(부모 발화 42초, 23 segments) → Gemini(4개 항목 모두 존재) →
   `ANALYZED` → 원본 3개 asset purge까지 성공
@@ -255,6 +269,8 @@ docker compose config --quiet
 Gemini thinking-capable Flash 모델은 내부 추론 토큰도 output budget을 사용한다. 500으로 두면
 짧은 JSON도 `MAX_TOKENS`로 잘렸기 때문에 기본 `GEMINI_MAX_OUTPUT_TOKENS=2048`을 사용하고,
 `finishReason != STOP` 응답은 불완전 JSON으로 파싱하지 않고 명시적으로 실패시킨다.
+API key는 query string이 아니라 `x-goog-api-key` header로 보내 exception URL/로그 노출을 막고,
+legacy query-key 형태의 예외 문자열도 redaction한다.
 
 화자 분리 OGG는 반드시 Track Egress로 저장한다. Participant Egress는 오디오·비디오
 transcode 경로여서 이 stack에서 OGG와 호환되지 않았다. `/accept`는 이미 publish된 자녀
@@ -297,6 +313,10 @@ LiveKit key/secret은 LiveKit Cloud에서 받지 않는다. 실제 iOS PushKit �
 APNs 자격증명이 추가된다. Gemini 무료 tier에는 제품 개선 데이터 사용 조건이 있으므로 실제
 건강정보가 아닌 더미 데이터만 사용한다.
 
+Deepgram에는 Aura TTS API가 있지만 2026-08-11 공식 지원 언어에 한국어가 없다. 따라서 기존
+Deepgram key로 콜록 질문의 한국어 TTS를 만들 수 없고 추가 Deepgram TTS key도 받지 않는다.
+현재 iOS 내장 `ko-KR` voice를 사용한다.
+
 `JWT_SECRET`은 클라이언트용 값이 아니다. Swift/iOS·프론트엔드 팀원에게 전달하지 않는다.
 하나의 공용 백엔드만 사용하면 그 배포 환경에만 보관한다. 팀원이 각자 독립 로컬 백엔드를
 실행하면 각자 다른 secret을 써도 된다. 같은 도메인에서 여러 backend replica가 동일 로그인
@@ -317,21 +337,21 @@ Admin에게 요청한다. 요청 범위는 다음과 같다.
 
 ## 8. 다음 작업 우선순위
 
-1. `ai-transcript-design.md`의 parent-only prompt v2와 semantic eval fixture를 구현한다.
-2. 되묻는 표현 사전·정규화·event 병합·집계 schema와 test를 구현한다.
-3. Deepgram word timing 보존과 AI-2 canonical waveform/quality gate를 구현한다.
-4. Silero VAD 기반 발화 속도·휴지 비율, pYIN F0 variation, YAMNet cough 순으로 구현한다.
-5. `4주 연속`을 calendar week 기준으로 수정하고 robust Z/baseline fixture test를 추가한다.
-6. Swift Xcode project에서 `ios-call-flow.md` 기준 CallCoordinator/PCM writer/로컬 TTS를 구현한다.
-7. APNs provider를 Apple sandbox에서 검증하고 실제 iPhone 양단 통화로 Track Egress와
+1. 실제 cough 30개/hard-negative 30개로 `transient-heuristic-v1`을 검증한다. precision 0.85
+   미달이면 YAMNet/검증된 cough classifier로 교체한다.
+2. 40-case Gemini eval을 `--start/--limit/--delay`로 quota-safe하게 완료하고 실패 fixture를
+   prompt/schema에 반영한다.
+3. Swift Xcode project에서 `ios-call-flow.md` 기준 CallCoordinator/16-bit PCM writer/로컬
+   `ko-KR` TTS를 구현한다.
+4. APNs provider를 Apple sandbox에서 검증하고 실제 iPhone 양단 통화로 Track Egress와
    네트워크 전환까지 E2E 검증한다.
-8. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다.
-9. SMS OTP와 일반 APNs 알림 provider를 붙인다.
+5. 실제 iPhone 20~30통으로 PCM 품질 gate/F0/기침 threshold와 time-slot 분포를 freeze한다.
+6. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다.
+7. SMS OTP와 일반 APNs 알림 provider를 붙인다.
 
-해커톤 핵심 demo 완료 기준은 1~7이다. 따라서 현재 상태에서 APNs/iPhone 검증만 하면 끝나는
-것은 아니다. 되묻기 detector, 실제 AI-2 analyzer, calendar-week 기준선, Swift 통화/PCM/TTS가
-먼저 또는 병렬로 완료되어야 한다. 8~9와 DB migration/TLS/secret manager는 production 전환
-작업이며 해커톤 시연의 필수 범위와 분리한다.
+해커톤 핵심 demo 완료 기준은 1~4다. backend/AI 코드는 prototype 수준으로 구현됐고, 이제
+주된 blocker는 실제 label 음원과 Swift/APNs/iPhone이다. 5는 신뢰도 보강, 6~7과 DB
+migration/TLS/secret manager는 production 전환 작업이다.
 
 다음 AI는 구현 전에 반드시 이 문서와 `backend/README.md`, 관련 service/test를 먼저 읽는다.
 API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, 판단 불가능한 건강 지표를 임의의
@@ -356,3 +376,8 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-11: 매 턴 시작 전 `fetch`/원격 commit 비교를 강제하는 협업 규칙 추가.
 - 2026-08-11: `/team` WebView 대응 팀 포털과 비밀값 없는 `/team/status.json` 추가.
 - 2026-08-11: LLM prompt/eval·되묻기 규칙 detector와 AI-2 4종 음향 지표 설계 확정.
+- 2026-08-11: prompt v2 parent evidence/polarity/grounding validator와 40-case eval suite 구현.
+- 2026-08-11: Gemini key를 query에서 header로 이동하고 exception redaction 추가.
+- 2026-08-11: 되묻기 규칙 detector/event/API/report와 Deepgram word timing 보존 구현.
+- 2026-08-11: PCM AI-2 4종 prototype, analyzer version 저장, calendar-week baseline 수정.
+- 2026-08-11: Deepgram Aura 한국어 TTS 미지원을 확인하고 iOS local `ko-KR` TTS로 확정.

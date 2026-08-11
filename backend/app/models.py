@@ -213,6 +213,22 @@ class Transcript(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class RepeatEvent(Base):
+    __tablename__ = "repeat_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    call_id: Mapped[str] = mapped_column(ForeignKey("calls.id"), index=True)
+    speaker: Mapped[str] = mapped_column(String(16), default=UserRole.PARENT.value)
+    start_ms: Mapped[int] = mapped_column(Integer)
+    end_ms: Mapped[int] = mapped_column(Integer)
+    category: Mapped[str] = mapped_column(String(32))
+    matched_text: Mapped[str] = mapped_column(Text)
+    rule_id: Mapped[str] = mapped_column(String(64))
+    confidence: Mapped[float] = mapped_column(Float)
+    rule_version: Mapped[str] = mapped_column(String(24))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class HealthExtraction(Base):
     __tablename__ = "health_extractions"
 
@@ -224,6 +240,16 @@ class HealthExtraction(Base):
     activity: Mapped[str | None] = mapped_column(Text, nullable=True)
     sleep: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ExtractionEvidence(Base):
+    __tablename__ = "extraction_evidence"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    call_id: Mapped[str] = mapped_column(ForeignKey("calls.id"), unique=True, index=True)
+    facts: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    schema_version: Mapped[str] = mapped_column(String(24), default="v2")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -239,6 +265,16 @@ class AcousticFeature(Base):
     status: Mapped[str] = mapped_column(String(24))
     unmeasurable_reason: Mapped[str | None] = mapped_column(String(48), nullable=True)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AcousticAnalysisRun(Base):
+    __tablename__ = "acoustic_analysis_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    call_id: Mapped[str] = mapped_column(ForeignKey("calls.id"), unique=True, index=True)
+    analyzer_version: Mapped[str] = mapped_column(String(48))
+    cough_detector_version: Mapped[str] = mapped_column(String(48))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Baseline(Base):

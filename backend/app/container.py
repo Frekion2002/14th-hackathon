@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.config import Settings
 from app.database import Database
-from app.services.acoustics import UnconfiguredAcousticAnalyzer
+from app.services.acoustics import create_acoustic_analyzer
 from app.services.deepgram import create_stt_gateway
 from app.services.gemini import create_extraction_gateway
 from app.services.livekit import create_livekit_gateway
@@ -22,7 +22,7 @@ class AppContainer:
         self.voip_push = create_voip_push_gateway(settings)
         self.stt = create_stt_gateway(settings)
         self.extraction = create_extraction_gateway(settings)
-        self.acoustics = UnconfiguredAcousticAnalyzer()
+        self.acoustics = create_acoustic_analyzer(settings)
         self.signals = SignalService(settings)
         self.reports = ReportService()
         self.pipeline = ProcessingPipeline(

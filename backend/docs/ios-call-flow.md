@@ -56,11 +56,43 @@ func provider(_ provider: CXProvider, didDeactivate session: AVAudioSession) {
 ## 발신자 흐름
 
 1. `POST /v1/calls { "calleeId": parentId }`
-2. 응답의 `questions` 중 TTS 문장을 발신자에게 로컬 재생한다. 이 음원은 통화 상대에게
-   송출하지 않는다.
+2. 응답의 `questions` 중 `ttsMode == IOS_LOCAL`인 문장을 `AVSpeechSynthesizer`의 `ko-KR`
+   음성으로 발신자에게만 재생한다. 이 음원은 통화 상대에게 송출하지 않는다.
 3. 응답의 `livekitUrl`, `accessToken`으로 room에 접속한다.
 4. 부모가 수락하면 부모도 같은 room에 접속한다.
 5. 종료 시 `POST /v1/calls/{callId}/end`를 호출한다.
+
+Deepgram Aura TTS API 자체는 존재하지만 2026-08-11 공식 지원 언어에 한국어가 없다. 따라서
+현재 `ttsAssetUrl`은 `null`, `ttsMode`는 `IOS_LOCAL`이며 STT에 쓰는 Deepgram key 외에 TTS용
+key는 추가하지 않는다. 추후 한국어 server TTS provider를 선택하면 서버가 미리 생성한 URL을
+`ttsAssetUrl`로 반환하고 `ttsMode=REMOTE_ASSET`으로 바꿀 수 있다.
+
+```swift
+import AVFoundation
+
+@MainActor
+final class RingingQuestionSpeaker {
+    private let synthesizer = AVSpeechSynthesizer()
+
+    func speak(_ text: String) {
+        stop()
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: "ko-KR")
+        utterance.rate = 0.48
+        synthesizer.speak(utterance)
+    }
+
+    // /accept에 해당하는 수신 상태 또는 LiveKit parent participant 연결 즉시 호출한다.
+    func stop() {
+        synthesizer.stopSpeaking(at: .immediate)
+    }
+}
+```
+
+재생은 발신자가 `POST /calls` 응답을 받은 뒤 시작하고, 부모 수락 event가 오면 문장 중간이어도
+즉시 중단한다. 질문은 화면에도 같은 text로 표시한다. 재생 실패가 통화 연결을 막아서는 안 되며,
+질문 두 개를 모두 읽느라 수신 연결을 늦추지 않는다. 초기 데모에서는 첫 질문 한 개만 최대
+3~5초 재생하고 나머지는 통화 화면의 참고 질문으로 표시한다.
 
 ## 수신자 흐름
 
@@ -136,7 +168,8 @@ if let track = publication?.track as? LocalAudioTrack {
 
 이 renderer는 LiveKit의 capture post-processing PCM을 받는다. 따라서 제품 문서의 “원시
 마이크”는 하드웨어 처리 전 원본이 아니라, `AEC=true`, `AGC/NS=false` 조건을 적용한 분석용
-PCM으로 정의한다. 파일은 mono 48 kHz PCM WAV로 정규화한다.
+PCM으로 정의한다. 파일은 mono 48 kHz signed 16-bit little-endian PCM WAV로 정규화한다.
+float32 WAV나 CAF를 그대로 올리면 서버가 `INVALID_AUDIO`로 거부한다.
 
 종료 시 renderer를 먼저 제거하고 파일을 닫는다.
 
@@ -192,4 +225,5 @@ TLS가 적용된 backend URL을 사용하고 production config에서는 `TEAM_PO
 
 참고: [Apple PushKit VoIP notifications](https://developer.apple.com/documentation/pushkit/responding-to-voip-notifications-from-pushkit),
 [Apple APNs provider requests](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns),
-[LiveKit Swift SDK CallKit integration](https://github.com/livekit/client-sdk-swift#integration-with-callkit).
+[LiveKit Swift SDK CallKit integration](https://github.com/livekit/client-sdk-swift#integration-with-callkit),
+[Deepgram Aura voices/languages](https://developers.deepgram.com/docs/tts-models).

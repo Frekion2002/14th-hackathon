@@ -4,23 +4,27 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.config import Settings
 from app.database import Database
 from app.models import (
+    AcousticAnalysisRun,
     AcousticFeature,
     AssetKind,
     AssetStatus,
     AudioAsset,
     CallRecord,
     CallState,
+    ExtractionEvidence,
     HealthExtraction,
+    RepeatEvent,
     Transcript,
 )
-from app.services.acoustics import AcousticAnalyzer
+from app.services.acoustics import AcousticAnalysisInput, AcousticAnalyzer
 from app.services.deepgram import SttGateway
 from app.services.gemini import ExtractionGateway
+from app.services.repeat_detector import detect_repeat_events
 from app.services.signals import SignalService
 from app.services.storage import StorageGateway
 
@@ -143,19 +147,32 @@ class ProcessingPipeline:
             child_stt = await self.stt.transcribe(child_audio, child_egress.content_type, "CHILD")
             stt_results.append(("CHILD", child_stt))
 
-        segments = sorted(
+        raw_segments = sorted(
             [
                 {
                     "speaker": speaker,
                     "startMs": segment.start_ms,
                     "endMs": segment.end_ms,
                     "text": segment.text,
+                    "words": [
+                        {
+                            "startMs": word.start_ms,
+                            "endMs": word.end_ms,
+                            "text": word.text,
+                            "confidence": word.confidence,
+                        }
+                        for word in segment.words
+                    ],
                 }
                 for speaker, result in stt_results
                 for segment in result.segments
             ],
             key=lambda item: (item["startMs"], item["speaker"]),
         )
+        segments = [
+            {"segmentId": f"s{index:04d}", **item} for index, item in enumerate(raw_segments)
+        ]
+        repeat_events = detect_repeat_events(segments)
         parent_speech_sec = round(parent_stt.speech_seconds)
         provider = parent_stt.provider
         excluded = parent_speech_sec < self.settings.parent_min_speech_seconds
@@ -176,6 +193,23 @@ class ProcessingPipeline:
             transcript.exclusion_reason = "INSUFFICIENT_PARENT_SPEECH" if excluded else None
             transcript.parent_speech_sec = parent_speech_sec
             transcript.segments = segments
+            await session.execute(delete(RepeatEvent).where(RepeatEvent.call_id == call_id))
+            session.add_all(
+                [
+                    RepeatEvent(
+                        call_id=call_id,
+                        speaker="PARENT",
+                        start_ms=event.start_ms,
+                        end_ms=event.end_ms,
+                        category=event.category,
+                        matched_text=event.matched_text,
+                        rule_id=event.rule_id,
+                        confidence=event.confidence,
+                        rule_version=event.rule_version,
+                    )
+                    for event in repeat_events
+                ]
+            )
             await session.commit()
 
         if excluded:
@@ -189,8 +223,9 @@ class ProcessingPipeline:
 
         transcript_text = "\n".join(f"{item['speaker']}: {item['text']}" for item in segments)
         try:
-            extracted = await self.extraction.extract(transcript_text)
+            extracted = await self.extraction.extract(segments)
             extraction_values = extracted.model_dump()
+            extraction_facts = [fact.model_dump(by_alias=True) for fact in extracted.facts]
             parse_status = "OK"
             raw_transcript = None
         except Exception:
@@ -198,12 +233,26 @@ class ProcessingPipeline:
             extraction_values = {
                 key: None for key in ("symptom", "medication", "activity", "sleep")
             }
+            extraction_facts = []
             parse_status = "FAILED"
             raw_transcript = transcript_text
 
         acoustic_asset = raw_asset or parent_egress
         acoustic_audio = await self.storage.read(acoustic_asset.uri)
-        measurements = await self.acoustics.analyze(acoustic_audio, acoustic_asset.sample_rate)
+        measurements = await self.acoustics.analyze(
+            AcousticAnalysisInput(
+                audio=acoustic_audio,
+                content_type=acoustic_asset.content_type,
+                declared_sample_rate=acoustic_asset.sample_rate,
+                source=(
+                    "DEVICE_RAW"
+                    if acoustic_asset.kind == AssetKind.DEVICE_RAW.value
+                    else "WEBRTC_EGRESS"
+                ),
+                parent_segments=[item for item in segments if item["speaker"] == "PARENT"],
+                parent_speech_seconds=parent_stt.speech_seconds,
+            )
+        )
 
         async with self.database.sessions() as session:
             extraction = await session.scalar(
@@ -218,6 +267,24 @@ class ProcessingPipeline:
             extraction.activity = extraction_values["activity"]
             extraction.sleep = extraction_values["sleep"]
             extraction.raw_transcript = raw_transcript
+            evidence = await session.scalar(
+                select(ExtractionEvidence).where(ExtractionEvidence.call_id == call_id)
+            )
+            if evidence is None:
+                evidence = ExtractionEvidence(call_id=call_id)
+                session.add(evidence)
+            evidence.facts = extraction_facts
+            evidence.schema_version = "v2"
+            analysis_run = await session.scalar(
+                select(AcousticAnalysisRun).where(AcousticAnalysisRun.call_id == call_id)
+            )
+            if analysis_run is None:
+                analysis_run = AcousticAnalysisRun(
+                    call_id=call_id,
+                    analyzer_version=self.settings.acoustic_analyzer_version,
+                    cough_detector_version="transient-heuristic-v1",
+                )
+                session.add(analysis_run)
             existing_metrics = set(
                 await session.scalars(
                     select(AcousticFeature.metric).where(AcousticFeature.call_id == call_id)

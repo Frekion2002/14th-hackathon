@@ -13,6 +13,7 @@ from app.models import (
     CallRecord,
     ChangeSignal,
     HealthExtraction,
+    RepeatEvent,
     Report,
 )
 from app.services.signals import signal_to_dict
@@ -71,6 +72,7 @@ class ReportService:
         extractions = []
         features = []
         signals = []
+        repeat_events = []
         if analyzed_ids:
             extractions = list(
                 await session.scalars(
@@ -87,6 +89,11 @@ class ReportService:
             signals = list(
                 await session.scalars(
                     select(ChangeSignal).where(ChangeSignal.call_id.in_(analyzed_ids))
+                )
+            )
+            repeat_events = list(
+                await session.scalars(
+                    select(RepeatEvent).where(RepeatEvent.call_id.in_(analyzed_ids))
                 )
             )
         collecting = await session.scalar(
@@ -119,6 +126,12 @@ class ReportService:
             "promotedSignals": promoted,
             "acuteSignals": acute,
             "conversationItems": conversation_items,
+            "repeatObservation": {
+                "count": len(repeat_events),
+                "callsWithRepeat": len({item.call_id for item in repeat_events}),
+                "label": f"되묻는 표현 {len(repeat_events)}회",
+                "ruleVersion": repeat_events[0].rule_version if repeat_events else None,
+            },
             "acousticTrends": [
                 {"metric": metric, "points": points} for metric, points in trends.items()
             ],
