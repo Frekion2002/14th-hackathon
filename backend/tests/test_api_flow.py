@@ -244,6 +244,51 @@ def test_complete_call_pipeline(client: TestClient) -> None:
     assert report.json()["repeatObservation"]["count"] == 0
 
 
+def test_raw_only_development_pipeline_without_egress(client: TestClient) -> None:
+    child_token, _, parent_token, parent = onboard_family(client)
+    client.app.state.container.settings.allow_raw_only_analysis = True
+    livekit = client.app.state.container.livekit
+
+    async def no_track_without_egress(room_name: str, identity: str) -> None:
+        del room_name, identity
+        return None
+
+    livekit.find_audio_track_id = no_track_without_egress
+    created = client.post(
+        "/v1/calls",
+        headers=auth(child_token),
+        json={"calleeId": parent["id"]},
+    )
+    call_id = created.json()["callId"]
+    accepted = client.post(f"/v1/calls/{call_id}/accept", headers=auth(parent_token))
+    assert accepted.status_code == 200, accepted.text
+
+    upload = client.post(
+        f"/v1/calls/{call_id}/raw-audio/upload-url",
+        headers=auth(parent_token),
+        json={"contentType": "audio/wav", "durationSec": 6, "sampleRate": 16000},
+    )
+    parsed = urlsplit(upload.json()["uploadUrl"])
+    uploaded = client.put(parsed.path + "?" + parsed.query, content=tone_wav())
+    assert uploaded.status_code == 204, uploaded.text
+
+    ended = client.post(f"/v1/calls/{call_id}/end", headers=auth(child_token))
+    assert ended.status_code == 200, ended.text
+    completed = client.post(
+        f"/v1/calls/{call_id}/raw-audio/complete",
+        headers=auth(parent_token),
+        json={"assetId": upload.json()["assetId"]},
+    )
+    assert completed.status_code == 202, completed.text
+
+    call = client.get(f"/v1/calls/{call_id}", headers=auth(child_token))
+    assert call.json()["state"] == "ANALYZED"
+    assert call.json()["rawAudioPurgedAt"] is not None
+    transcript = client.get(f"/v1/calls/{call_id}/transcript", headers=auth(child_token))
+    assert transcript.status_code == 200, transcript.text
+    assert {segment["speaker"] for segment in transcript.json()["segments"]} == {"PARENT"}
+
+
 def test_track_published_webhook_starts_late_parent_egress(client: TestClient) -> None:
     child_token, _, parent_token, parent = onboard_family(client)
     livekit = client.app.state.container.livekit

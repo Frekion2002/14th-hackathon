@@ -116,6 +116,7 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 �
 - iOS 앱 골격. PushKit 토큰 발급, VoIP push 수신, CallKit 수신 화면 표시까지 실기기 동작
 - iOS 개발 OTP 로그인, 기기 자동 등록, 가족 목록 발신, 발신·수신 공통 통화 화면
 - iOS LiveKit room 접속과 CallKit 세션 활성화 후 마이크 publish, 연결 대기 질문 `ko-KR` TTS
+- Egress 없는 개발 환경의 부모 PCM-only 분석 mode와 회귀 test. 운영 기본값은 비활성
 
 ### 의도적으로 미완료
 
@@ -130,8 +131,8 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 �
 - 전체 40-case 실제 Gemini eval. provider가 처리한 7건은 7/7, 나머지 33건은 free-tier quota로
   요청 자체가 실패해 미평가다.
 - SMS OTP 실제 발송 provider. 개발 OTP는 `000000`이다.
-- server TTS asset은 없다. 한국어 질문은 의도적으로 iOS 로컬 TTS이며 Swift 구현/실기기
-  수락 즉시 중단 검증이 남았다.
+- server TTS asset은 없다. 한국어 질문은 의도적으로 iOS 로컬 TTS로 구현했으며 실기기에서
+  상대 수락 즉시 중단되는지 최종 검증이 남았다.
 - 실기기 양단 통화. 2026-08-13에 한 대(부모 역할)로 push→수락→LiveKit→PCM 업로드→분석까지
   검증했고 자녀 쪽은 API로 대신했다. iPhone 2대로 실제 음성이 오가는 통화는 아직이다.
 - 현재 발급한 `.p8`는 **sandbox 전용**이다. production endpoint는 `BadEnvironmentKeyInToken`
@@ -246,9 +247,10 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 
 | 파일 | 역할 |
 |---|---|
-| `ios/Collog.xcodeproj` | Xcode project. Bundle ID `com.Collog`, deployment target iOS 26.5, LiveKit SPM |
+| `ios/Collog.xcodeproj` | Xcode project. Bundle ID `com.Collog`, deployment target iOS 17.0, LiveKit SPM |
 | `ios/Collog/CollogApp.swift` | `AppDelegate`로 실행 초기 PushKit/APNs 등록과 remote token 수신 |
 | `ios/Collog/VoipCallCenter.swift` | PushKit 수신, CallKit 발신/수신 action, LiveKit room 접속과 마이크 publish |
+| `ios/Collog/AnalysisPCMWriter.swift` | LiveKit local capture를 callback 수명 안에서 48 kHz mono int16 WAV로 기록 |
 | `ios/Collog/CollogAPI.swift` | OTP/기기/가족/통화 REST client와 서버 오류 message 파싱 |
 | `ios/Collog/AppSession.swift` | 로그인 세션·가족 구성원 상태. 토큰과 backend URL을 UserDefaults에 보관 |
 | `ios/Collog/RingingQuestionSpeaker.swift` | 연결 대기 질문의 `ko-KR` 로컬 TTS 재생/즉시 중단 |
@@ -289,11 +291,17 @@ uv build
 docker compose config --quiet
 ```
 
-2026-08-11 마지막 검증 결과:
+2026-08-13 `feat/ios-pushkit` 통합 검증 결과:
 
 - `uv run ruff check .`: 통과
-- `uv run pytest -q`: 38 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
+- `uv run pytest -q`: 44 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
 - `uv build`: wheel/sdist 생성 성공
+- `docker compose config --quiet`: 통과. analyzer v3/품질 gate/raw-only 환경변수 전달 확인
+- Swift 전체 source `swiftc -frontend -parse`: 문법 검사 통과
+- `plutil -lint`: Xcode project, Info.plist, entitlement 통과
+- 이 Mac은 full Xcode가 아닌 Command Line Tools만 활성화되어 있어 이번 main 통합 시점에는
+  `xcodebuild`를 재실행하지 못했다. 브랜치 작성자는 같은 소스를 Xcode/실기기에서 빌드해
+  APNs sandbox CallKit 수신과 부모 PCM 분석을 확인했다고 기록했다.
 - generated OpenAPI: 27 paths / 28 operations
 - `docker-compose.yml`, `deploy/livekit.yaml`, `deploy/egress.yaml`: YAML parse 통과
 - Docker Compose 5.4.0 + Colima arm64에서 Postgres/Redis/MinIO/LiveKit/Egress/backend 전체
@@ -459,18 +467,19 @@ production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용�
    미달이면 YAMNet/검증된 cough classifier로 교체한다.
 2. 40-case Gemini eval을 `--start/--limit/--delay`로 quota-safe하게 완료하고 실패 fixture를
    prompt/schema에 반영한다.
-3. iOS 앱에 LiveKit Swift SDK를 SPM으로 추가하고 `ios-call-flow.md` 기준으로
-   `connectMedia`/오디오 세션 handler, 16-bit PCM writer, 로컬 `ko-KR` TTS를 채운다.
-   로그인 흐름을 붙여 `/devices` 자동 등록과 `/accept`가 동작하게 한다.
-4. 실제 iPhone 양단 통화로 Track Egress와 네트워크 전환까지 E2E 검증한다. APNs는
+3. 실제 iPhone 양단 통화로 Track Egress, 오디오 라우팅, 연결 질문 TTS 즉시 중단과 네트워크
+   전환까지 E2E 검증한다. APNs는
    sandbox 실기기 CallKit 수신까지 2026-08-13에 검증했다.
-5. 실제 iPhone 20~30통으로 PCM 품질 gate/F0/기침 threshold와 time-slot 분포를 freeze한다.
-6. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다.
-7. SMS OTP와 일반 APNs 알림 provider를 붙인다.
+4. 통화 시작 직후 PCM 유실 여부를 대본과 전사로 확인하고, 재현되면 writer 부착 시점을
+   앞당기거나 짧은 pre-publish buffer를 둔다.
+5. iOS 초대·동의·질환 프로필 화면을 구현하고 개발 seed script 의존을 없앤다.
+6. 실제 iPhone 20~30통으로 PCM 품질 gate/F0/기침 threshold와 time-slot 분포를 freeze한다.
+7. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다.
+8. SMS OTP와 일반 APNs 알림 provider를 붙인다.
 
 해커톤 핵심 demo 완료 기준은 1~4다. backend/AI 코드는 prototype 수준으로 구현됐고, 이제
-주된 blocker는 실제 label 음원과 Swift/APNs/iPhone이다. 5는 신뢰도 보강, 6~7과 DB
-migration/TLS/secret manager는 production 전환 작업이다.
+주된 blocker는 실제 label 음원과 iPhone 2대 검증이다. 5는 앱 UX 완성, 6은 신뢰도 보강,
+7~8과 DB migration/TLS/secret manager는 production 전환 작업이다.
 
 다음 AI는 구현 전에 반드시 이 문서와 `backend/README.md`, 관련 service/test를 먼저 읽는다.
 API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, 판단 불가능한 건강 지표를 임의의
@@ -507,3 +516,5 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-13: Docker 없이 실행하는 네이티브 LiveKit/MinIO 구성과 가족 seed 스크립트 추가.
 - 2026-08-13: 실기기 PCM 업로드로 Egress 없이 STT/LLM/음향 파이프라인 완주. 품질 게이트를 실측으로 -55 dBFS/p90 보정.
 - 2026-08-13: 기침 detector 재현율 0을 합성 검증으로 확인하고 보정 계획을 calibration-todo.md에 정리.
+- 2026-08-13: `feat/ios-pushkit` 4개 커밋을 main에 통합하고 PCM buffer 수명, 통화 화면 상태,
+  Docker analyzer 설정, raw-only replay 회귀와 iOS 17 deployment target을 보완.

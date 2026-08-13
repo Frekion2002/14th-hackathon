@@ -3,8 +3,17 @@ import SwiftUI
 // 발신과 수신이 같은 화면을 쓴다. 오늘의 질문은 연결 대기 중 낭독되고 통화 중에는
 // 참고용으로 계속 보인다.
 struct CallView: View {
-    let call: ActiveCall
+    let initialCall: ActiveCall
     @ObservedObject private var callCenter = VoipCallCenter.shared
+
+    // fullScreenCover의 item은 동일 id 안에서 값이 바뀌어도 최초 snapshot일 수 있다.
+    // 현재 callCenter 상태를 다시 읽어 connecting/ringing/active 전환이 화면에 반영되게 한다.
+    private var call: ActiveCall {
+        guard let current = callCenter.activeCall, current.id == initialCall.id else {
+            return initialCall
+        }
+        return current
+    }
 
     var body: some View {
         VStack(spacing: 24) {

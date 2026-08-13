@@ -228,8 +228,8 @@ publish options/codec 설정에서 별도로 적용하고, 실제 패킷 통계�
 ```swift
 final class AnalysisPCMWriter: AudioRenderer, @unchecked Sendable {
     func render(pcmBuffer: AVAudioPCMBuffer) {
-        // SDK가 buffer를 재사용할 수 있으므로 callback 안에서 복사한 뒤
-        // 전용 serial queue에서 WAV/CAF 파일에 기록한다.
+        // SDK가 buffer를 재사용할 수 있으므로 callback이 반환되기 전에 전용 serial queue에서
+        // 변환·기록을 완료한다. 원본 buffer 참조를 async closure로 넘기지 않는다.
     }
 }
 

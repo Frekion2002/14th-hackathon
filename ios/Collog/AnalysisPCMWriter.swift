@@ -90,14 +90,24 @@ final class AnalysisPCMWriter: NSObject, AudioRenderer, @unchecked Sendable {
                 commonFormat: .pcmFormatInt16,
                 interleaved: true
             )
+            converter = nil
+            sourceFormat = nil
             url = target
             frameCount = 0
+            peakSample = 0
+            squareSum = 0
+            sampleCount = 0
+            loggedSourceFormat = false
+            frameRMS.removeAll(keepingCapacity: true)
+            frameSquareSum = 0
+            frameSamples = 0
         }
     }
 
-    // LiveKit은 buffer를 재사용할 수 있으므로 callback 안에서 변환까지 끝내고 반환한다.
+    // LiveKit은 callback 반환 뒤 buffer를 재사용할 수 있다. 별도 queue에 원본 buffer 참조를
+    // 넘기면 다음 audio frame으로 덮일 수 있으므로 변환·기록을 반환 전에 완료한다.
     func render(pcmBuffer: AVAudioPCMBuffer) {
-        queue.async { [weak self] in
+        queue.sync { [weak self] in
             guard let self, let file = self.file else { return }
             do {
                 if !self.loggedSourceFormat {

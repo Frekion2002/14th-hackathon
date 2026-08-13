@@ -98,8 +98,10 @@ mc mb --ignore-existing collog/collog-audio
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```
 
-이 구성에는 Egress worker가 없다. 실시간 통화와 오디오는 동작하지만 Track Egress 녹음과
-그 뒤의 STT/LLM/음향 파이프라인은 돌지 않는다. 녹음까지 검증할 때에는 compose 스택을 쓴다.
+이 구성에는 Egress worker가 없다. 기본값에서는 실시간 통화만 동작하고 Track Egress 기반의
+부모/자녀 분리 전사도 생성되지 않는다. 부모 기기가 올린 분석용 PCM만으로 개발 파이프라인을
+끝까지 시험하려면 `.env`에 `ALLOW_RAW_ONLY_ANALYSIS=true`를 넣는다. 이때 transcript는 부모
+단일 화자로만 생성된다. 양쪽 분리 녹음까지 검증할 때에는 compose 스택을 쓴다.
 
 앱에는 아직 초대·동의·질환 프로필 화면이 없으므로, 실기기 통화를 시험하기 전에 자녀에게
 연결된 부모 계정을 만들어 둔다.
@@ -107,6 +109,9 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```bash
 uv run python -m scripts.seed_demo_family --child-phone 01000000002
 ```
+
+저장된 WAV/OGG로 provider와 분석기만 재실행하려면 `scripts.replay_call`을 쓴다. `--raw-audio`
+만 전달한 경우에는 스크립트가 이번 실행에서 raw-only mode를 자동으로 켠다.
 
 Egress는 LiveKit과 같은 Redis를 사용한다. 통화 수락 시 이미 publish된 자녀의 microphone
 track을 조회하고, 수락 뒤 publish되는 부모 track은 서명된 `track_published` 웹훅으로 받아

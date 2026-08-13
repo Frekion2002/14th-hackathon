@@ -22,7 +22,7 @@ struct ContentView: View {
         }
         // 통화가 시작되면 어느 화면에 있든 통화 화면을 덮어씌운다.
         .fullScreenCover(item: callBinding) { call in
-            CallView(call: call)
+            CallView(initialCall: call)
         }
     }
 

@@ -64,6 +64,10 @@ async def upload(container: AppContainer, key: str, body: bytes, content_type: s
 
 async def replay(args: argparse.Namespace) -> int:
     settings = Settings()
+    # raw WAV만 전달한 replay는 그 자체가 Egress 없는 개발 검증 요청이다. 사용자가 숨은
+    # 환경변수를 따로 알아야만 스크립트가 동작하는 상태를 피한다.
+    if args.raw_audio and not args.parent_audio:
+        settings.allow_raw_only_analysis = True
     if settings.mock_external_services:
         print("경고: MOCK_EXTERNAL_SERVICES=true 입니다. 실제 Deepgram/Gemini를 호출하지 않습니다.")
     container = AppContainer(settings)
