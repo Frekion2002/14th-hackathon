@@ -624,9 +624,13 @@ async def accept_call(
         raise HTTPException(status.HTTP_409_CONFLICT, "이미 종료되었거나 응답한 통화입니다")
     call.state = CallState.ACTIVE.value
     call.accepted_at = datetime.now(UTC)
+    settings = settings_from(request)
     livekit = request.app.state.container.livekit
     token = livekit.participant_token(call.room_name, user.id, user.name)
-    if call.recording_enabled:
+    # Egress worker가 없는 raw-only 개발 환경에서는 Track Egress를 아예 시작하지 않는다.
+    # worker가 없으면 StartTrackEgress가 20초 넘게 블로킹된 뒤 503으로 실패하는데, 그동안
+    # 부모가 토큰을 못 받아 통화가 붙지 않고 열린 쓰기 트랜잭션이 다른 요청까지 잠근다.
+    if call.recording_enabled and not settings.allow_raw_only_analysis:
         for identity, kind, filename in (
             (call.parent_id, AssetKind.WEBRTC_EGRESS_PARENT, "parent.ogg"),
             (call.child_id, AssetKind.WEBRTC_EGRESS_CHILD, "child.ogg"),
@@ -651,7 +655,7 @@ async def accept_call(
     await session.commit()
     response = CallAccepted(
         call_id=call.id,
-        livekit_url=settings_from(request).livekit_url,
+        livekit_url=settings.livekit_url,
         room_name=call.room_name,
         access_token=token,
         raw_capture_required=call.recording_enabled,
