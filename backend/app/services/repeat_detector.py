@@ -5,7 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
-RULE_VERSION = "repeat-ko-v1"
+RULE_VERSION = "repeat-ko-v2"
 MERGE_GAP_MS = 3_000
 
 
@@ -51,8 +51,9 @@ RULES = (
         "clarify.meaning", "CLARIFICATION", _compile(r"무슨\s*말(?:이야|이에요|이오)"), 0.82, True
     ),
     _Rule("clarify.how", "CLARIFICATION", _compile(r"어떻게"), 0.72, True),
-    _Rule("clarify.huh-eung", "CLARIFICATION", _compile(r"응"), 0.65, True),
-    _Rule("clarify.huh-eo", "CLARIFICATION", _compile(r"어"), 0.62, True),
+    # 감탄사 되묻기는 발화 전체가 그 소리일 때만 성립한다. 반복 발성도 허용한다.
+    _Rule("clarify.huh-eung", "CLARIFICATION", _compile(r"응+"), 0.65, True),
+    _Rule("clarify.huh-eo", "CLARIFICATION", _compile(r"어+"), 0.62, True),
 )
 
 EXCLUSIONS = (
@@ -69,8 +70,14 @@ def normalize_korean_utterance(text: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
-def _is_short_standalone(text: str) -> bool:
-    return len(text.split()) <= 2 and len(text.replace(" ", "")) <= 7
+POLITE_SUFFIXES = {"", "요", "용", "여", "네", "예", "라고"}
+
+
+# 길이만 보면 "어지럽습니다"처럼 짧은 증상 호소가 "어" 규칙에 걸린다. standalone 규칙은
+# 매칭 부분이 발화 전체를 덮을 때만 인정한다.
+def _covers_utterance(match: re.Match[str], text: str) -> bool:
+    remainder = (text[: match.start()] + text[match.end() :]).strip()
+    return remainder in POLITE_SUFFIXES
 
 
 def detect_repeat_events(segments: list[dict[str, Any]]) -> list[RepeatMatch]:
@@ -84,7 +91,7 @@ def detect_repeat_events(segments: list[dict[str, Any]]) -> list[RepeatMatch]:
             continue
         for rule in RULES:
             match = rule.pattern.search(normalized)
-            if not match or (rule.standalone_only and not _is_short_standalone(normalized)):
+            if not match or (rule.standalone_only and not _covers_utterance(match, normalized)):
                 continue
             raw_matches.append(
                 RepeatMatch(

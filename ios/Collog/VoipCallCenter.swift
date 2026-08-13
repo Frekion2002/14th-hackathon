@@ -64,6 +64,13 @@ final class VoipCallCenter: NSObject, ObservableObject {
     private var pendingOutgoing: (uuid: UUID, calleeId: String, name: String)?
     private var answeredCallIds: Set<String> = []
     private var pendingCapture: AudioCaptureOptions?
+    private var analysisWriter: AnalysisPCMWriter?
+    private var analysisTrack: LocalAudioTrack?
+    private var rawCaptureRequired = false
+    // CallKit의 didActivate는 /accept 응답보다 먼저 올 수 있다. 두 조건이 모두 갖춰진
+    // 시점에 publish해야 하므로 어느 쪽이 늦든 같은 진입점을 다시 호출한다.
+    private var isAudioSessionActive = false
+    private var didPublishMicrophone = false
 
     func start() {
         // CallKit이 AVAudioSession의 소유자다. LiveKit 자동 설정을 끄고 엔진도 꺼둔 상태로
@@ -153,25 +160,118 @@ final class VoipCallCenter: NSObject, ObservableObject {
         )
         try await room.connect(url: url, token: token)
         log("LiveKit 접속: room=\(roomName)")
+        publishMicrophoneIfReady()
     }
 
-    private func publishMicrophone() {
-        guard let options = pendingCapture else { return }
+    private func publishMicrophoneIfReady() {
+        guard !didPublishMicrophone else { return }
+        guard isAudioSessionActive else {
+            log("마이크 publish 대기: 오디오 세션 미활성")
+            return
+        }
+        guard let options = pendingCapture else {
+            log("마이크 publish 대기: room 접속 전")
+            return
+        }
+        didPublishMicrophone = true
         Task {
             do {
-                _ = try await room.localParticipant.setMicrophone(
+                let publication = try await room.localParticipant.setMicrophone(
                     enabled: true,
                     captureOptions: options
                 )
                 log("마이크 publish 완료")
+                attachAnalysisWriter(to: publication)
             } catch {
+                didPublishMicrophone = false
                 log("마이크 publish 실패: \(error.localizedDescription)")
             }
         }
     }
 
+    // 서버가 요구할 때만 분석용 PCM을 남긴다. 같은 캡처 스트림을 관찰하므로 별도의
+    // AVAudioEngine tap을 만들지 않는다.
+    private func attachAnalysisWriter(to publication: LocalTrackPublication?) {
+        guard analysisWriter == nil else { return }
+        guard rawCaptureRequired else {
+            log("분석 PCM 생략: 서버가 원본 캡처를 요구하지 않음")
+            return
+        }
+        let resolved = publication?.track
+            ?? room.localParticipant.audioTracks.first?.track
+        guard let track = resolved as? LocalAudioTrack else {
+            log("분석 PCM 실패: local audio track을 찾지 못했다")
+            return
+        }
+        let writer = AnalysisPCMWriter()
+        do {
+            try writer.start()
+        } catch {
+            log("분석 PCM 시작 실패: \(error.localizedDescription)")
+            return
+        }
+        track.add(audioRenderer: writer)
+        analysisWriter = writer
+        analysisTrack = track
+        log("분석 PCM 기록 시작")
+    }
+
+    // renderer를 먼저 떼고 파일을 닫은 뒤 업로드한다. 업로드가 끝나면 로컬 파일을 지운다.
+    private func finishAnalysisRecording(callId: String) {
+        guard let writer = analysisWriter else {
+            log("분석 PCM 업로드 생략: 기록된 writer 없음")
+            return
+        }
+        analysisWriter = nil
+        analysisTrack?.remove(audioRenderer: writer)
+        analysisTrack = nil
+        let duration = writer.durationSeconds
+        let levels = writer.levelSummary
+        // 서버 게이트는 50ms 프레임 RMS의 분위수를 활성 레벨로 보고 임계값과 비교한다.
+        log(
+            String(
+                format: "분석 PCM peak %.1f / rms %.1f / p75 %.1f / p90 %.1f dBFS (%d프레임)",
+                levels.peak,
+                levels.rms,
+                levels.p75,
+                levels.p90,
+                levels.frames
+            )
+        )
+        guard let fileURL = writer.finish(), duration > 0 else {
+            writer.discard()
+            log("분석 PCM 없음")
+            return
+        }
+        Task {
+            do {
+                let upload = try await CollogAPI.rawAudioUploadUrl(
+                    callId: callId,
+                    durationSec: duration,
+                    sampleRate: Int(AnalysisPCMWriter.sampleRate)
+                )
+                try await CollogAPI.uploadRawAudio(to: upload.uploadUrl, fileURL: fileURL)
+                try await CollogAPI.rawAudioComplete(callId: callId, assetId: upload.assetId)
+                log("분석 PCM 업로드 완료 (\(Int(duration))초)")
+            } catch {
+                log("분석 PCM 업로드 실패: \(error.localizedDescription)")
+            }
+            // 완료든 실패든 기기에 원본을 남기지 않는다.
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
     private func teardown() {
         speaker.stop()
+        if let callId = activeCall?.id {
+            finishAnalysisRecording(callId: callId)
+        } else {
+            analysisTrack = nil
+            analysisWriter?.discard()
+            analysisWriter = nil
+        }
+        rawCaptureRequired = false
+        didPublishMicrophone = false
         pendingCapture = nil
         pendingOutgoing = nil
         activeCall = nil
@@ -353,6 +453,7 @@ extension VoipCallCenter: CXProviderDelegate {
             Task {
                 do {
                     let accepted = try await CollogAPI.accept(callId: call.id)
+                    rawCaptureRequired = accepted.rawCaptureRequired
                     try await connectMedia(
                         url: accepted.livekitUrl,
                         token: accepted.accessToken,
@@ -403,8 +504,9 @@ extension VoipCallCenter: CXProviderDelegate {
                     options: [.mixWithOthers]
                 )
                 setEngine(.default)
+                isAudioSessionActive = true
                 log("오디오 세션 활성화")
-                publishMicrophone()
+                publishMicrophoneIfReady()
             } catch {
                 log("오디오 초기화 실패: \(error.localizedDescription)")
             }
@@ -414,6 +516,7 @@ extension VoipCallCenter: CXProviderDelegate {
     nonisolated func provider(_ provider: CXProvider, didDeactivate session: AVAudioSession) {
         MainActor.assumeIsolated {
             setEngine(.none)
+            isAudioSessionActive = false
             log("오디오 세션 비활성화")
         }
     }

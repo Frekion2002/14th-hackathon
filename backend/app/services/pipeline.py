@@ -101,7 +101,8 @@ class ProcessingPipeline:
                 ),
                 None,
             )
-            if parent_egress is None:
+            raw_only = self.settings.allow_raw_only_analysis and parent_egress is None
+            if parent_egress is None and not raw_only:
                 if egress_assets:
                     call.state = CallState.ANALYSIS_FAILED.value
                     call.processing_error = "부모 Egress 녹음이 완료되지 않았습니다"
@@ -133,14 +134,19 @@ class ProcessingPipeline:
             if pending_raw:
                 return
             if raw_asset is None:
+                if raw_only:
+                    return
                 elapsed = datetime.now(UTC) - aware_datetime(call.ended_at)
                 if elapsed.total_seconds() < self.settings.raw_audio_wait_seconds:
                     return
             call.state = CallState.PROCESSING.value
             await session.commit()
 
-        parent_audio = await self.storage.read(parent_egress.uri)
-        parent_stt = await self.stt.transcribe(parent_audio, parent_egress.content_type, "PARENT")
+        # Egress가 없는 개발 환경에서는 부모 기기가 올린 분석용 PCM을 부모 음성으로 쓴다.
+        # 자녀 음성이 없으므로 transcript에는 부모 발화만 남는다.
+        parent_source = parent_egress or raw_asset
+        parent_audio = await self.storage.read(parent_source.uri)
+        parent_stt = await self.stt.transcribe(parent_audio, parent_source.content_type, "PARENT")
         stt_results = [("PARENT", parent_stt)]
         if child_egress:
             child_audio = await self.storage.read(child_egress.uri)
@@ -237,7 +243,7 @@ class ProcessingPipeline:
             parse_status = "FAILED"
             raw_transcript = transcript_text
 
-        acoustic_asset = raw_asset or parent_egress
+        acoustic_asset = raw_asset or parent_source
         acoustic_audio = await self.storage.read(acoustic_asset.uri)
         measurements = await self.acoustics.analyze(
             AcousticAnalysisInput(

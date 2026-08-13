@@ -81,13 +81,15 @@
 | AI-1 Deepgram STT | 연동·실호출 검증 완료 | Nova-3 한국어 요청/응답 정규화 완료. 합성 한국어와 실제 Track Egress OGG를 API로 전사해 E2E 성공 |
 | AI-1 LLM 항목 추출(P0-5) | 구현·실호출 검증 완료 | 부모-only segment JSON, polarity/evidence, grounding validator. 실제 처리 7건은 7/7; 나머지 33건은 free-tier quota로 미평가 |
 | AI-1 되묻는 표현 탐지 | 구현 완료 | 부모 utterance 한국어 규칙/제외, 3초 병합, rule version, 분당 빈도, transcript/report API |
-| AI-2 음향 지표 4종(P0-16) | hackathon prototype 완료 | word timing 속도/휴지, PCM pYIN F0, `transient-heuristic-v1` 기침 후보. labeled validation은 남음 |
+| AI-2 음향 지표 4종(P0-16) | 부분 동작 | 속도는 실기기 측정됨. 휴지는 항상 0에 가깝고, 기침 detector는 재현율이 사실상 0이며, F0는 유성음 게이트에 걸린다 |
 | AI-2 기준선·robust Z(P0-14/P0-6) | 구현·fixture 검증 완료 | ISO calendar-week median, 4개 주, 현재값 제외, MAD=0 UNSCORABLE, 결측 주 연속 중단 |
 | 백엔드 P0 API | prototype 완료 | 인증·초대·동의·통화·LiveKit·리포트·정리 loop 구현. 운영용 SMS/worker/migration/실배포 검증은 별도 |
 
-백엔드/AI 해커톤 prototype의 미구현 코드는 크게 줄었다. 남은 핵심은 기침 후보 detector의
-labeled precision 검증, Swift 앱 구현, APNs/실제 iPhone 양단 통화와 PCM E2E다. 현재 음향값은
-fixture에서 실제 계산되고 기준선까지 흐르지만 기침 수치를 의료 검증값으로 소개하면 안 된다.
+백엔드/AI 해커톤 prototype의 미구현 코드는 크게 줄었고, 2026-08-13에 실기기 통화로
+STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 핵심은 음향 지표의 신뢰도다.
+네 지표 중 실제로 값이 나오는 것은 발화 속도뿐이며, 휴지 비율은 구조적으로 0에 가깝고
+기침은 탐지되지 않는다. 어떤 음향 수치도 의료 검증값으로 소개해서는 안 된다.
+근거와 보정 계획은 `backend/docs/calibration-todo.md`에 있다.
 
 ### 완료
 
@@ -117,21 +119,26 @@ fixture에서 실제 계산되고 기준선까지 흐르지만 기침 수치를 
 
 ### 의도적으로 미완료
 
-- 기침 후보 detector는 범용 transient heuristic이다. cough 30개/hard negative 30개로
-  precision 0.85 이상을 확인하지 않았으며 실패하면 검증된 classifier로 교체한다.
+- **기침 detector는 현재 재현율이 사실상 0이다.** 합성 검증에서 +40 dB 폭발음도 탐지되지
+  않았고, 점수 분해 결과 energy(가중 0.40)와 crest(0.15) 항이 구조적으로 죽어 있어 임계값
+  0.65에 도달할 수 없다. `0.0 OK`로 저장되므로 "기침 없음"으로 오독될 위험이 있다.
+  근거와 수정 계획은 `backend/docs/calibration-todo.md` 1절에 있다.
+- 음향/되묻기 상수를 측정으로 정할 calibration harness가 없다. 라벨 fixture와
+  `scripts/calibrate_acoustics.py`가 필요하며 설계는 calibration-todo 2절에 있다.
+- `PAUSE_RATIO`는 segment 내부 간격만 세어 항상 0에 가깝다. 지표 정의 변경이라 팀 결정 필요.
+- 되묻기 탐지 재현율 미측정. `repeat-ko-v2`에서 `어` 부분 일치 오탐은 고쳤다.
 - 전체 40-case 실제 Gemini eval. provider가 처리한 7건은 7/7, 나머지 33건은 free-tier quota로
   요청 자체가 실패해 미평가다.
 - SMS OTP 실제 발송 provider. 개발 OTP는 `000000`이다.
 - server TTS asset은 없다. 한국어 질문은 의도적으로 iOS 로컬 TTS이며 Swift 구현/실기기
   수락 즉시 중단 검증이 남았다.
-- APNs 실기기 E2E는 CallKit 수신 화면 표시까지만 검증했다(2026-08-13, sandbox, HTTP 200).
-  실제 통화 orchestration에서 나온 push로 수락→LiveKit 접속까지 이어지는 경로는 아직이다.
+- 실기기 양단 통화. 2026-08-13에 한 대(부모 역할)로 push→수락→LiveKit→PCM 업로드→분석까지
+  검증했고 자녀 쪽은 API로 대신했다. iPhone 2대로 실제 음성이 오가는 통화는 아직이다.
 - 현재 발급한 `.p8`는 **sandbox 전용**이다. production endpoint는 `BadEnvironmentKeyInToken`
   으로 거부된다. Xcode 직접 설치 빌드 데모에는 문제가 없지만 TestFlight/App Store 빌드로
   넘어가려면 Sandbox & Production key를 새로 발급해야 한다.
-- iOS 분석용 PCM writer. `LocalAudioTrack.add(audioRenderer:)`로 48 kHz mono 16-bit WAV를
-  만들고 `/raw-audio/upload-url` → PUT → `/raw-audio/complete`로 올리는 경로가 아직 없다.
-  따라서 현재 앱만으로는 음향 분석 파이프라인이 돌지 않는다.
+- 통화 시작 직후 구간이 분석용 PCM에서 유실될 가능성. writer가 `마이크 publish` 이후에
+  부착되므로 받자마자 말하면 앞부분이 빠질 수 있다. 재현 확인이 필요하다.
 - iOS 앱의 초대·동의·질환 프로필 화면. 부모 계정은 백엔드 API로 먼저 만들어야 하며
   앱에서는 로그인과 수신만 가능하다.
 - iOS 토큰 저장은 `UserDefaults`다. 실사용 배포 전 Keychain으로 옮긴다.
@@ -224,7 +231,10 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
 | `backend/scripts/seed_demo_family.py` | 개발 OTP로 자녀-부모 초대·수락·동의·질환 프로필 생성 CLI |
+| `backend/scripts/replay_call.py` | Egress 없이 로컬 오디오로 STT/LLM/음향 파이프라인 실행 CLI |
+| `backend/scripts/acoustic_quality_report.py` | 음향 지표 측정 성공률과 실패 사유 분포 집계 CLI |
 | `backend/deploy/livekit-local.yaml` | Docker 없이 실행하는 단일 노드 LiveKit 설정. Egress 없음 |
+| `backend/docs/calibration-todo.md` | 보정되지 않은 상수와 측정 계획. 근거와 완료 기준 |
 | `backend/tests/test_api_flow.py` | 온보딩부터 분석·폐기·리포트까지 E2E API test |
 | `backend/tests/test_providers.py` | Deepgram/Gemini/APNs provider unit test |
 | `backend/tests/test_ai_pipeline.py` | prompt/repeat/acoustic/calendar-week deterministic test |
@@ -495,3 +505,5 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-13: iOS Xcode project를 `ios/`로 추가하고 PushKit→CallKit 실기기 수신을 검증.
 - 2026-08-13: iOS 로그인·발신·수신 통화 화면과 LiveKit 연동, 질문 로컬 TTS 구현.
 - 2026-08-13: Docker 없이 실행하는 네이티브 LiveKit/MinIO 구성과 가족 seed 스크립트 추가.
+- 2026-08-13: 실기기 PCM 업로드로 Egress 없이 STT/LLM/음향 파이프라인 완주. 품질 게이트를 실측으로 -55 dBFS/p90 보정.
+- 2026-08-13: 기침 detector 재현율 0을 합성 검증으로 확인하고 보정 계획을 calibration-todo.md에 정리.

@@ -25,6 +25,10 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         jwt_secret="test-secret-with-more-than-thirty-two-characters",
         mock_external_services=True,
         raw_audio_wait_seconds=0,
+        # 개발자의 .env가 s3나 Egress 없는 분석을 켜두었더라도 테스트는 항상 같은 조건에서
+        # 돈다. 명시한 값이 .env보다 우선한다.
+        storage_backend="local",
+        allow_raw_only_analysis=False,
     )
     app = create_app(settings)
     with TestClient(app) as test_client:

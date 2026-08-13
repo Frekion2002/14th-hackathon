@@ -60,6 +60,12 @@ def pcm_wav(samples: np.ndarray, sample_rate: int = 16_000) -> bytes:
         ("응 맞아", False),
         ("어 그래 오늘 산책했어", False),
         ("한 번 더 먹었어", False),
+        # 감탄사 규칙이 부분 일치로 증상 호소를 되묻기로 잡으면 안 된다.
+        ("어지럽습니다", False),
+        ("어지러워요", False),
+        ("응급실에 갔어", False),
+        ("어깨가 아파", False),
+        ("어어?", True),
     ],
 )
 def test_repeat_detector_rules(text: str, expected: bool) -> None:

@@ -95,7 +95,7 @@ class CollogAcousticAnalyzer(AcousticAnalyzer):
                 unmeasurable(Metric.COUGH_EVENTS, "회", reason),
             ]
 
-        quality_reason = waveform_quality_reason(waveform)
+        quality_reason = waveform_quality_reason(waveform, self.settings)
         if quality_reason:
             return timing + [
                 unmeasurable(Metric.F0_VARIATION, "semitone_mad", quality_reason),
@@ -131,7 +131,7 @@ class CollogAcousticAnalyzer(AcousticAnalyzer):
             window_ms += current_window
             for previous, current in zip(words, words[1:], strict=False):
                 gap = int(current.get("startMs", 0)) - int(previous.get("endMs", 0))
-                if 300 <= gap <= 2_000:
+                if self.settings.pause_min_gap_ms <= gap <= self.settings.pause_max_gap_ms:
                     pause_ms += gap
         if usable_utterances < 1 or window_ms <= 0:
             return unmeasurable(Metric.PAUSE_RATIO, "%", "INSUFFICIENT_WORD_TIMING")
@@ -242,18 +242,18 @@ def decode_pcm_wav(audio: bytes, declared_sample_rate: int | None = None) -> Wav
     return Waveform(np.ascontiguousarray(samples, dtype=np.float32), sample_rate)
 
 
-def waveform_quality_reason(waveform: Waveform) -> str | None:
+def waveform_quality_reason(waveform: Waveform, settings: Settings) -> str | None:
     samples = waveform.samples
-    if samples.size / waveform.sample_rate < 5:
+    if samples.size / waveform.sample_rate < settings.quality_min_duration_sec:
         return "AUDIO_TOO_SHORT"
-    if float(np.mean(np.abs(samples) >= 0.999)) >= 0.01:
+    if float(np.mean(np.abs(samples) >= 0.999)) >= settings.quality_max_clipping_ratio:
         return "EXCESSIVE_CLIPPING"
     frame_size = max(1, round(0.05 * waveform.sample_rate))
     usable_size = samples.size - samples.size % frame_size
     frames = samples[:usable_size].reshape(-1, frame_size)
     frame_rms = np.sqrt(np.mean(frames**2, axis=1) + 1e-12)
-    active_rms = float(np.percentile(frame_rms, 75))
-    if 20 * math.log10(active_rms + 1e-12) <= -45:
+    active_rms = float(np.percentile(frame_rms, settings.quality_active_percentile))
+    if 20 * math.log10(active_rms + 1e-12) <= settings.quality_min_active_dbfs:
         return "SIGNAL_TOO_QUIET"
     return None
 

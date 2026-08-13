@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     apns_private_key_path: Path | None = None
     incoming_call_ttl_seconds: int = 45
 
+    # Track Egress worker가 없는 개발 환경에서 기기의 분석용 PCM만으로 파이프라인을 돌린다.
+    # 부모/자녀 트랙 분리 전사가 없으므로 운영에서는 반드시 false로 둔다.
+    allow_raw_only_analysis: bool = False
+
     deepgram_api_key: str = ""
     deepgram_model: str = "nova-3"
     deepgram_language: str = "ko"
@@ -68,8 +72,18 @@ class Settings(BaseSettings):
     baseline_window_weeks: int = 4
     robust_z_threshold: float = 1.5
     promoted_consecutive_weeks: int = 4
-    acoustic_analyzer_version: str = "collog-acoustic-v1"
+    acoustic_analyzer_version: str = "collog-acoustic-v3"
     cough_score_threshold: float = 0.65
+
+    # 아래 값은 실측으로 보정되지 않은 잠정 상수다. 코드에 숨어 있으면 틀렸다는 사실조차
+    # 드러나지 않으므로 설정으로 노출한다. 값을 바꿀 때에는 저장된 값과 구분되도록
+    # acoustic_analyzer_version도 함께 올린다.
+    quality_min_duration_sec: float = 5.0
+    quality_max_clipping_ratio: float = 0.01
+    quality_active_percentile: float = 90.0
+    quality_min_active_dbfs: float = -55.0
+    pause_min_gap_ms: int = 300
+    pause_max_gap_ms: int = 2_000
 
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     team_portal_enabled: bool = True

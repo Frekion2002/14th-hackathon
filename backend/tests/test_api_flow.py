@@ -228,7 +228,12 @@ def test_complete_call_pipeline(client: TestClient) -> None:
     assert acoustics.status_code == 200
     assert len(acoustics.json()["features"]) == 4
     assert {item["status"] for item in acoustics.json()["features"]} == {"OK"}
-    assert acoustics.json()["analyzerVersion"] == "collog-acoustic-v1"
+    # 품질 게이트 상수를 보정하면 analyzer version이 올라간다. 값 자체를 고정하는 대신
+    # 실행한 설정이 응답에 그대로 기록되는지 확인한다.
+    assert (
+        acoustics.json()["analyzerVersion"]
+        == client.app.state.container.settings.acoustic_analyzer_version
+    )
 
     report = client.get(
         f"/v1/parents/{parent['id']}/reports?period=WEEKLY", headers=auth(child_token)

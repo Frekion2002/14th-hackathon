@@ -154,6 +154,51 @@ enum CollogAPI {
         _ = try await sendRaw("/v1/calls/\(callId)/end", method: "POST", body: nil)
     }
 
+    // MARK: - 분석용 원본 오디오
+
+    struct RawAudioUpload: Decodable {
+        let uploadUrl: String
+        let assetId: String
+    }
+
+    static func rawAudioUploadUrl(
+        callId: String,
+        durationSec: Double,
+        sampleRate: Int
+    ) async throws -> RawAudioUpload {
+        try await send(
+            "/v1/calls/\(callId)/raw-audio/upload-url",
+            method: "POST",
+            body: [
+                "contentType": "audio/wav",
+                "durationSec": durationSec,
+                "sampleRate": sampleRate,
+            ]
+        )
+    }
+
+    static func uploadRawAudio(to urlString: String, fileURL: URL) async throws {
+        guard let url = URL(string: urlString) else {
+            throw APIError.status(0, "업로드 URL이 올바르지 않습니다")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
+        let (data, response) = try await URLSession.shared.upload(for: request, fromFile: fileURL)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(code) else {
+            throw APIError.status(code, String(data: data, encoding: .utf8) ?? "")
+        }
+    }
+
+    static func rawAudioComplete(callId: String, assetId: String) async throws {
+        _ = try await sendRaw(
+            "/v1/calls/\(callId)/raw-audio/complete",
+            method: "POST",
+            body: ["assetId": assetId]
+        )
+    }
+
     // MARK: - 전송
 
     private static func send<T: Decodable>(
