@@ -267,3 +267,122 @@ stratification이 개선됐다. 이는 콜록의 개인 내 종단 관찰 방향
 - [Sonde 공개 feature API 설명](https://sondehealth.atlassian.net/wiki/spaces/SA/pages/2706309124/Mental)
 - [Winterlight 임상 연구](https://winterlightlabs.com/clinical-research/)
 - [WHO hearWHO](https://www.who.int/news-room/questions-and-answers/item/deafness-and-hearing-loss-hearing-checks-and-the-hearwho-app)
+
+## 11. PCM과 cough rate의 제품 의미
+
+PCM(Pulse Code Modulation)은 시간에 따른 공기 진동을 일정 주기로 샘플링한 숫자 배열이다.
+예를 들어 16 kHz mono PCM은 1초의 소리를 16,000개 숫자로 표현한다. MP3, AAC, Opus처럼
+사람이 덜 느끼는 성분을 버리는 압축을 하지 않아 F0와 짧은 acoustic event 분석에 유리하다.
+
+다만 `PCM = 물리 마이크에서 나온 완전한 원음`은 아니다. iOS의 Voice Processing, AEC,
+noise suppression, AGC를 거친 뒤에도 PCM 형태일 수 있다. 따라서 model/version뿐 아니라
+`audioRoute`, voice-processing mode, device model을 함께 고정하거나 기록해야 개인 기준선이
+의미가 있다.
+
+콜록이 산출할 수 있는 것은 하루 전체의 시간당 기침 수가 아니라 **분석된 통화 구간에서의
+시간당 환산 기침 의심 구간 수**다.
+
+```text
+callCoughRate = coughBoutCount × 3600 / analyzableCallSeconds
+```
+
+예를 들어 10분 통화에서 2건이면 수학적으로 12건/분석시간이지만 `하루 종일 시간당 12번
+기침했다`고 표현하면 안 된다. 통화가 짧거나 표본 통화가 적은 주에는 값의 분산이 매우 커진다.
+UI에는 count, 분석시간, 환산값과 coverage를 함께 표시하고 최소 분석시간 미달이면 추세를
+만들지 않는다.
+
+현재 부모 iPhone의 local capture를 분석하므로 주 대상은 부모 측 소리다. 그러나 같은 방의
+다른 사람, TV, speakerphone으로 재생된 자녀 음성도 들어올 수 있어 source verification 전에는
+`상대방이 한 기침`이 아니라 `부모 기기 주변에서 탐지된 기침 의심 구간`이 정확한 표현이다.
+
+첨부된 artifact 크기 표는 공식 repository의 SavedModel 구성과 부합한다. 해커톤 첫 구현은
+`event_detector_small` fp32를 권장한다. 3.85MB는 충분히 작고 int8 quantization으로 인한 score
+분포·threshold 변화를 피할 수 있다. Small/Large 및 fp32/int8의 최종 선택은 파일 크기가 아니라
+동일 test set의 precision, recall, FP/hour, latency로 한다. int8은 representative calibration
+set에서 성능 보존을 확인한 뒤에만 채택한다.
+
+## 12. 기침 이외의 통화 기반 건강 관찰 후보
+
+한 번의 기침을 알아채는 것 자체는 사람이 할 수 있다. 자동화의 가치는 긴 기간에 걸친 횟수와
+변화를 놓치지 않는 데 있지만, 주 1회 짧은 통화만으로 cough burden을 대표하기 어렵기 때문에
+기침만을 주력 가치로 두는 것은 약하다.
+
+콜록의 더 강한 제품 구조는 아래 세 레이어를 결합하는 것이다.
+
+### 12-1. 직접 확인한 건강 사실: 가장 먼저 구현
+
+TTS가 자녀에게 같은 범주의 질문을 알려주고, STT/LLM은 부모가 직접 말한 것만 구조화한다.
+
+- 수면: 입면, 야간 각성, 평소 대비 수면 변화
+- 활동: 외출·산책, 계단, 평소 활동을 못 한 이유
+- 복약: 복용 여부, 중단·변경 언급
+- 증상: 통증, 어지럼, 숨참, 기침, 식욕·소화, 낙상 언급
+- 기능: 장보기·식사 준비·병원 방문 같은 일상 기능 변화
+
+이 레이어는 음향만으로 원인을 추측하는 것보다 설명 가능하고 행동으로 연결하기 쉽다. 단,
+부모의 자기보고이며 사실 검증이나 진단 결과가 아니라는 표시가 필요하다.
+
+### 12-2. 대화 방식의 개인 내 변화: 콜록의 차별화 후보
+
+| 관찰값 | 구현 | 해석 한계 |
+|---|---|---|
+| response latency | 자녀 질문 끝과 부모 답 시작 사이 시간 | 네트워크, 질문 난이도, 주변 상황 영향 |
+| articulation/speech rate | STT timing + 음절 수 | 피로·감정·마이크·주제 영향 |
+| pause distribution | raw PCM VAD 또는 turn-aware timing | 생각, 호흡, 단어 찾기를 구분 못 함 |
+| repair rate | 3-turn 문맥의 되묻기→실제 반복 | 난청·네트워크·내용 확인이 혼합됨 |
+| turn length | 발화시간, 음절 수, 정보 단위 | 평소 말투와 질문 종류 영향 |
+| filled pause/word finding | `음`, `그거`, `뭐였더라`와 장기 pause | 자연스러운 말버릇일 수 있음 |
+| repeated topic/question | 이전 통화와 semantic repetition | 일상적 반복과 기억 문제를 구분 못 함 |
+| voice quality stability | F0, CPP/HNR, jitter/shimmer 후보 | iOS voice processing·감기·피로 영향 큼 |
+
+인지·파킨슨 관련 연구에서도 speech rate, pause, articulation, monopitch, voice quality를 다루지만
+대부분 통제된 과제나 진단된 cohort에서 검증한다. 콜록은 이 값을 질환명으로 변환하지 않고
+`평소 대비 변화`로만 보여준다.
+
+비교 가능성을 높이려면 완전히 자유로운 통화 전체보다 **질문 기준 구간(prompt-anchored
+window)**을 만든다. 동일하거나 동등한 난이도의 건강 질문 뒤 20~40초 답변에서 response
+latency, pause, speech rate, answer length를 측정하면 주제 차이의 영향을 줄일 수 있다.
+
+### 12-3. 비음성 iPhone 정보: 선택 동의 기반 보강
+
+HealthKit read permission을 별도로 받은 경우 다음 정보가 음성보다 직접적인 기능 변화 지표가
+될 수 있다.
+
+- iPhone/Apple Watch의 steps와 walking/running distance
+- walking speed, step length, asymmetry, double-support percentage
+- iPhone 8 이상이 자동 계산하는 Walking Steadiness
+- Apple Watch가 있을 때 sleep duration, resting heart rate 등
+- 콜록 앱 내부의 통화 응답률·통화시간 변화
+
+Walking Steadiness는 iPhone을 허리 근처에 지니고 평지에서 걸은 자료가 충분할 때 계산되며
+일반적으로 7일 간격이지만 자료 부족 시 더 오래 걸릴 수 있다. 그래서 결측을 악화로 간주하면
+안 된다.
+
+GPS 이동경로, Screen Time, 시스템 전화기록, 키보드 입력 분석은 개인정보 부담이 크고 iOS
+접근 제약도 있어 해커톤 우선순위에서 제외한다. 카메라 PPG나 자체 gait model도 별도 검증이
+없으면 건강값으로 제시하지 않는다.
+
+### 12-4. 추천 MVP 조합
+
+```text
+1. 질환별 표준 건강 질문과 구조화된 자기보고
+2. 질문 뒤 response latency + speech rate + pause + repair rate
+3. 기침은 보조 event count/rate
+4. 선택적으로 HealthKit step/Walking Steadiness 추세
+5. 모두 동일인 기준선에서만 비교하고 원인·질환은 출력하지 않음
+```
+
+리포트 예시는 `치매/난청/호흡기 질환 의심`이 아니라 다음과 같이 구성한다.
+
+- “최근 3주 동안 질문 후 답변 시작 시간이 평소보다 길었습니다.”
+- “다시 말해 달라는 표현이 늘었지만 통화 환경의 영향도 있을 수 있습니다.”
+- “이번 주 18분의 분석 가능한 통화에서 기침 의심 구간이 2건 있었습니다.”
+- “최근 7일 걸음 수가 본인의 지난 4주 중앙값보다 낮았습니다.”
+- “다음 통화에서 수면·복약·어지럼 여부를 확인해 보세요.”
+
+추가 근거:
+
+- [Apple Walking Steadiness](https://developer.apple.com/documentation/healthkit/hkquantitytypeidentifier/applewalkingsteadiness)
+- [Apple Health step count](https://developer.apple.com/documentation/healthkit/hkquantitytypeidentifier/stepcount)
+- [실제 스마트폰 통화 speech biomarker 종단 연구](https://pubmed.ncbi.nlm.nih.gov/41467327/)
+- [질문 응답의 speech rate·pause와 인지군 비교 연구](https://pubmed.ncbi.nlm.nih.gov/37722818/)

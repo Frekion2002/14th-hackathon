@@ -567,3 +567,6 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-13: HeAR 논문·PyTorch model card·공개 MobileNetV3 event detector와 Hyfe/ResAppDx/
   Swaasa/Sonde/Winterlight/hearWHO를 조사. cough count는 HeAR Small/YAMNet bake-off로 결정하고,
   되묻기는 난청 판정이 아닌 문맥적 대화 수리 관찰값으로 제한하기로 정리.
+- 2026-08-13: PCM은 비압축 sample 형식이지만 iOS voice processing을 이미 거칠 수 있음을 명시.
+  cough rate를 통화 표본 내 환산값으로 제한하고, 표준 질문 기반 대화 변화와 선택적 HealthKit
+  활동 추세를 결합하는 후속 제품 방향을 `voice-health-model-research.md`에 추가.
