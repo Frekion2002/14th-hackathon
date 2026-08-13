@@ -140,7 +140,9 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 �
 - iOS LiveKit room 접속과 CallKit 세션 활성화 후 마이크 publish, remote MP3/iOS 질문 TTS
 - iPhone 2대 통화 자동 판정 CLI와 LAN/APNs/고정 대화/장애 분리 E2E 실행서
 - iOS 통화 화면의 ElevenLabs/iOS 폴백 badge, remote player 상태·즉시 중단 로그와 전체 로그 복사
-- Egress 없는 개발 환경의 부모 PCM-only 분석 mode와 회귀 test. 운영 기본값은 비활성
+- Egress 없는 개발 환경의 부모 PCM-only 분석 mode. `ALLOW_RAW_ONLY_ANALYSIS=true`이면
+  `/accept`가 Track Egress 조회·시작을 건너뛰어 부모의 LiveKit token 응답을 지연시키지 않는다.
+  운영 기본값은 비활성이며, Egress 호출 0회를 보장하는 회귀 test가 있다.
 
 ### 의도적으로 미완료
 
@@ -340,6 +342,8 @@ docker compose config --quiet
 - `uv run pytest -q`: 47 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
 - `uv build`: wheel/sdist 생성 성공
 - `docker compose config --quiet`: 통과. analyzer v3/품질 gate/raw-only 환경변수 전달 확인
+- `fix/skip-track-egress-raw-only` main 통합: `uv run ruff check .` 통과, `uv run pytest -q`
+  47 tests 통과. raw-only `/accept`가 Track Egress 조회·시작을 호출하지 않는 회귀 assertion 추가
 - Swift 전체 source `swiftc -frontend -parse`: 문법 검사 통과
 - `plutil -lint`: Xcode project, Info.plist, entitlement 통과
 - 이 Mac은 full Xcode가 아닌 Command Line Tools만 활성화되어 있어 이번 main 통합 시점에는
@@ -605,3 +609,6 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   활동 추세를 결합하는 후속 제품 방향을 `voice-health-model-research.md`에 추가.
 - 2026-08-13: 초기 서비스 기획안을 개조식으로 재구성. 중복을 제거하고 양 참여자 분석,
   필수 온보딩 동의, Deepgram/Gemini 역할, 근거 기반 리포트, 미검증 음향값 비노출을 반영.
+- 2026-08-13: Egress worker가 없는 raw-only 개발 구성에서 `/accept`가 Track Egress 응답을
+  기다리며 통화 연결과 DB transaction을 지연시키던 문제를 수정. raw-only일 때 Egress 조회·시작을
+  모두 생략하고, 일반 Compose의 양쪽 Track Egress 경로는 유지.
