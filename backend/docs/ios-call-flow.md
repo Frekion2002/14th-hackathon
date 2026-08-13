@@ -39,6 +39,78 @@ func provider(_ provider: CXProvider, didDeactivate session: AVAudioSession) {
 }
 ```
 
+## Xcode 프로젝트 설정
+
+서버가 쓰는 Bundle ID와 Xcode target의 Bundle Identifier는 반드시 같아야 한다. 서버는
+`<Bundle ID>.voip`를 apns-topic으로 보낸다.
+
+Signing & Capabilities에 다음을 추가한다.
+
+- Push Notifications
+- Background Modes > Voice over IP
+- Background Modes > Audio, AirPlay, and Picture in Picture
+
+`Info.plist`에는 마이크 사용 설명이 필요하다.
+
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>통화 연결과 건강 기록을 위해 마이크를 사용합니다.</string>
+```
+
+iOS 13 이상에서 PushKit VoIP push를 받으면 **같은 실행 안에서 반드시**
+`reportNewIncomingCall`을 호출해야 한다. 호출하지 않으면 시스템이 앱을 종료하고 반복되면
+VoIP push 수신 권한을 잃는다.
+
+```swift
+import CallKit
+import PushKit
+
+final class VoipPushHandler: NSObject, PKPushRegistryDelegate {
+    private let registry = PKPushRegistry(queue: .main)
+    private let provider = CXProvider(configuration: {
+        let configuration = CXProviderConfiguration()
+        configuration.supportsVideo = false
+        configuration.maximumCallsPerCallGroup = 1
+        configuration.supportedHandleTypes = [.generic]
+        return configuration
+    }())
+
+    // 로그인 이후 한 번 호출한다. 토큰은 앱 실행마다 바뀔 수 있다.
+    func start() {
+        registry.delegate = self
+        registry.desiredPushTypes = [.voIP]
+    }
+
+    func pushRegistry(
+        _ registry: PKPushRegistry,
+        didUpdate credentials: PKPushCredentials,
+        for type: PKPushType
+    ) {
+        let token = credentials.token.map { String(format: "%02x", $0) }.joined()
+        // POST /v1/devices의 voipToken으로 보낸다.
+    }
+
+    func pushRegistry(
+        _ registry: PKPushRegistry,
+        didReceiveIncomingPushWith payload: PKPushPayload,
+        for type: PKPushType,
+        completion: @escaping () -> Void
+    ) {
+        let call = payload.dictionaryPayload["call"] as? [String: Any] ?? [:]
+        let uuid = (call["callUUID"] as? String).flatMap(UUID.init) ?? UUID()
+        let update = CXCallUpdate()
+        update.localizedCallerName = call["callerName"] as? String ?? "콜록"
+        update.hasVideo = false
+        provider.reportNewIncomingCall(with: uuid, update: update) { _ in
+            completion()
+        }
+    }
+}
+```
+
+`didInvalidatePushTokenFor`를 받으면 서버 등록을 갱신하고, 앱 삭제/재설치 후에는 토큰이
+바뀌므로 로그인 직후 항상 재등록한다.
+
 ## 토큰 등록
 
 1. 일반 APNs remote-notification 토큰과 PushKit `.voIP` 토큰을 각각 hex 문자열로 만든다.

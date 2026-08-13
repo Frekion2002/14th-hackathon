@@ -114,7 +114,22 @@ TLS/TURN을 앞단에 구성해야 한다.
 분석용 PCM 캡처 방식은 [`docs/ios-call-flow.md`](docs/ios-call-flow.md)에 정리했다.
 
 실기기 수신 통화를 켜려면 Apple Developer에서 VoIP Services가 가능한 App ID와 APNs
-토큰 키를 준비한 뒤 다음 값을 설정한다.
+토큰 키를 준비한다. Apple Developer Program 팀의 Account Holder 또는 Admin 권한이 필요하다.
+
+1. Certificates, Identifiers & Profiles > Identifiers에서 App ID를 만들고 Bundle ID를
+   정한다(예: `com.collog.app`). Capabilities에서 Push Notifications를 켠다.
+2. Keys에서 새 key를 만들고 Apple Push Notifications service (APNs)를 체크한다. Configure
+   화면의 Environment와 Key Restriction은 **저장 후 변경할 수 없다**. Environment는
+   `Sandbox & Production`, Key Restriction은 `Team Scoped (All Topics)`를 권한다. Sandbox
+   전용 key로 production endpoint에 보내면 `BadEnvironmentKeyInToken`이 나오고 key를 새로
+   발급해야 하는데, APNs key는 팀당 개수 제한이 있다. 받은 `AuthKey_XXXXXXXXXX.p8`은
+   **한 번만** 다운로드할 수 있으며 파일명의 10자리가 Key ID다.
+3. Team ID는 Membership 화면 우측 상단에서 확인한다.
+4. 인증서(Certificates)의 VoIP Services Certificate는 만들지 않아도 된다. 토큰 방식 `.p8`
+   하나로 sandbox와 production을 모두 처리한다.
+
+Bundle ID는 팀 전체가 공유하고, `.p8`은 서버 운영자에게만 보안 채널로 전달한다.
+값을 받으면 다음을 설정한다.
 
 ```dotenv
 APNS_VOIP_ENABLED=true
@@ -129,6 +144,24 @@ APNS_PRIVATE_KEY_PATH=/absolute/or/container/path/AuthKey_XXXX.p8
 컨테이너에 읽기 전용 마운트하고 `APNS_PRIVATE_KEY_PATH`를 컨테이너 내부 경로로 지정한다.
 APNs가 꺼져 있거나 부모 기기에 `voipToken`이 없으면 foreground-only 데모 통화는 계속
 동작한다.
+
+Swift 앱이나 실기기 없이도 자격증명만 먼저 검증할 수 있다. 아래는 `.env`의 `APNS_*` 값으로
+Apple에 실제 요청을 보내며, `MOCK_EXTERNAL_SERVICES`와 `APNS_VOIP_ENABLED` 값과 무관하게
+항상 실제 APNs를 호출한다.
+
+```bash
+# 더미 토큰으로 .p8/Team ID/Key ID/Bundle ID 조합만 점검한다.
+uv run python -m scripts.check_apns
+# 실제 PushKit 토큰으로 CallKit 수신 화면까지 확인한다.
+uv run python -m scripts.check_apns --device-token <hex> --environment sandbox
+```
+
+더미 토큰 점검에서 `BadDeviceToken`이 나오면 자격증명은 정상이다. Apple이 토큰을 보기 전에
+provider JWT와 topic을 먼저 검사하기 때문이다. `InvalidProviderToken`은 `.p8`/Key ID/Team ID
+조합 문제, `BadTopic`·`TopicDisallowed`는 Bundle ID 또는 App ID capability 문제다.
+
+Xcode 직접 설치 빌드의 토큰은 `sandbox`, TestFlight/App Store 빌드의 토큰은 `production`
+에서만 유효하다. 환경이 어긋나면 같은 토큰이라도 `BadDeviceToken`이 된다.
 
 Gemini는 말하지 않은 원인을 추론하지 않으며 질환명, 위험군 라벨, 응급도, 치료 지시를
 생성하지 않도록 시스템 지시와 응답 스키마로 제한한다.

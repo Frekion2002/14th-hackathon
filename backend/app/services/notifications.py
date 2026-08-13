@@ -116,6 +116,18 @@ class ApnsVoipPushGateway(VoipPushGateway):
             self._provider_token_issued_at = now
         return self._provider_token
 
+    def request_headers(self) -> dict[str, str]:
+        return {
+            "authorization": f"bearer {self.provider_token()}",
+            "apns-topic": f"{self.settings.apns_bundle_id}.voip",
+            "apns-push-type": "voip",
+            "apns-priority": "10",
+            "apns-expiration": "0",
+        }
+
+    def device_url(self, device_token: str) -> str:
+        return f"{self.endpoint}/3/device/{device_token}"
+
     @staticmethod
     def normalize_device_token(token: str) -> str:
         normalized = re.sub(r"[\s<>]", "", token)
@@ -127,14 +139,8 @@ class ApnsVoipPushGateway(VoipPushGateway):
         device_token = self.normalize_device_token(token)
         try:
             response = await self.client.post(
-                f"{self.endpoint}/3/device/{device_token}",
-                headers={
-                    "authorization": f"bearer {self.provider_token()}",
-                    "apns-topic": f"{self.settings.apns_bundle_id}.voip",
-                    "apns-push-type": "voip",
-                    "apns-priority": "10",
-                    "apns-expiration": "0",
-                },
+                self.device_url(device_token),
+                headers=self.request_headers(),
                 json=push.payload(),
             )
         except httpx.HTTPError as exc:

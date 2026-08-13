@@ -1,6 +1,6 @@
 # 콜록(Collog) 개발 HANDOFF
 
-마지막 갱신: 2026-08-11 (Asia/Seoul)
+마지막 갱신: 2026-08-13 (Asia/Seoul)
 
 이 문서는 콜록 개발의 단일 인수인계 기준이다. 구현, 계약, 검증 결과, 미완료 항목이 바뀌면
 코드와 같은 커밋에서 반드시 이 문서를 갱신한다. 비밀키와 실제 건강정보는 기록하지 않는다.
@@ -110,6 +110,8 @@ fixture에서 실제 계산되고 기준선까지 흐르지만 기침 수치를 
 - PushKit → CallKit → `/accept` → LiveKit iOS 계약 문서
 - `/team` 모바일 웹 포털과 `/team/status.json` 비밀값 없는 연동 상태 endpoint
 - 연결 대기 질문 `ttsMode=IOS_LOCAL` 계약과 Swift `AVSpeechSynthesizer(ko-KR)` 예제
+- APNs 자격증명 점검·실기기 발송 CLI와 sandbox 실기기 CallKit 수신 검증
+- iOS 앱 골격. PushKit 토큰 발급, VoIP push 수신, CallKit 수신 화면 표시까지 실기기 동작
 
 ### 의도적으로 미완료
 
@@ -120,9 +122,16 @@ fixture에서 실제 계산되고 기준선까지 흐르지만 기침 수치를 
 - SMS OTP 실제 발송 provider. 개발 OTP는 `000000`이다.
 - server TTS asset은 없다. 한국어 질문은 의도적으로 iOS 로컬 TTS이며 Swift 구현/실기기
   수락 즉시 중단 검증이 남았다.
-- APNs 실기기 E2E. provider 코드는 구현했지만 Apple 계정 식별자와 `.p8`, 실제 iPhone으로
-  검증해야 한다.
-- Swift 앱 자체. 현재는 서버 계약과 연동 문서만 있으며 Xcode project는 아직 없다.
+- APNs 실기기 E2E는 CallKit 수신 화면 표시까지만 검증했다(2026-08-13, sandbox, HTTP 200).
+  실제 통화 orchestration에서 나온 push로 수락→LiveKit 접속까지 이어지는 경로는 아직이다.
+- 현재 발급한 `.p8`는 **sandbox 전용**이다. production endpoint는 `BadEnvironmentKeyInToken`
+  으로 거부된다. Xcode 직접 설치 빌드 데모에는 문제가 없지만 TestFlight/App Store 빌드로
+  넘어가려면 Sandbox & Production key를 새로 발급해야 한다.
+- Swift 앱의 통화 미디어. LiveKit Swift SDK를 SPM으로 추가하지 않았고
+  `VoipCallCenter.connectMedia`/`disconnectMedia`와 오디오 세션 handler가 로그만 남기는
+  stub이다. 분석용 PCM writer와 로컬 `ko-KR` TTS도 아직 없다.
+- Swift 앱의 로그인 흐름. `CollogAPI.accessToken`이 비어 있어 `/devices` 자동 등록과
+  `/accept` 호출이 동작하지 않는다. 현재는 화면에 표시된 토큰을 수동으로 사용한다.
 - APNs 토큰 410/Unregistered 시 DB device 비활성화. 현재 발송 실패를 로그로 남긴다.
 - 내구성 있는 작업 큐. 현재 분석 재시도/정리는 FastAPI process의 background task다.
 
@@ -208,12 +217,30 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/docs/acoustic-design.md` | 음향 4종 정의, 품질 gate, model, worker와 검증 기준 |
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
+| `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
 | `backend/tests/test_api_flow.py` | 온보딩부터 분석·폐기·리포트까지 E2E API test |
 | `backend/tests/test_providers.py` | Deepgram/Gemini/APNs provider unit test |
 | `backend/tests/test_ai_pipeline.py` | prompt/repeat/acoustic/calendar-week deterministic test |
 | `backend/tests/conftest.py` | 격리 SQLite와 mock provider test app fixture |
 | `backend/pyproject.toml` | Python 의존성, ruff/pytest/build 설정 |
 | `backend/uv.lock` | 재현 가능한 dependency lock |
+
+### iOS 앱
+
+| 파일 | 역할 |
+|---|---|
+| `ios/Collog.xcodeproj` | Xcode project. Bundle ID `com.Collog`, deployment target iOS 26.5 |
+| `ios/Collog/CollogApp.swift` | `AppDelegate`로 실행 초기 PushKit/APNs 등록과 remote token 수신 |
+| `ios/Collog/VoipCallCenter.swift` | PushKit VoIP 수신, CallKit 보고, 수락/거절/종료 시 backend 호출 |
+| `ios/Collog/CollogAPI.swift` | `/devices`, `/accept`, `/decline`, `/end` REST client |
+| `ios/Collog/ContentView.swift` | 개발용 토큰 확인 화면. VoIP/APNs 토큰 표시와 복사 |
+| `ios/Collog/Collog.entitlements` | `aps-environment` push entitlement |
+| `ios/Collog/Info.plist` | `UIBackgroundModes` = `voip`, `audio` |
+
+`project.pbxproj`에 `DEVELOPMENT_TEAM`이 고정되어 있다. 같은 Apple Developer 팀에 초대되지
+않은 팀원은 Signing & Capabilities에서 자기 팀으로 바꿔 빌드하고 그 변경은 커밋하지 않는다.
+Xcode가 만드는 `ios/.git`은 제거했다. 다시 생기면 저장소가 iOS 소스 대신 submodule 링크만
+기록하므로 clone한 팀원에게 빈 `ios/`가 전달된다.
 
 ## 6. 실행과 검증
 
@@ -383,13 +410,22 @@ APNs 작업은 단순 Apple ID 보유자가 아니라 Apple Developer Program �
 Admin에게 요청한다. 요청 범위는 다음과 같다.
 
 1. 콜록의 explicit Bundle ID를 확정하고 해당 App ID에 Push Notifications capability를 켠다.
-2. 기존 APNs-enabled signing key를 안전하게 재사용하거나, 가능하면 콜록 topic에 제한된 새
-   key를 생성한다.
+2. 기존 APNs-enabled signing key를 안전하게 재사용하거나 새 key를 생성한다. Configure Key의
+   Environment와 Key Restriction은 저장 후 변경할 수 없다. Bundle ID가 확정되기 전이라면
+   Topic Scoped 대신 Team Scoped를 쓴다. APNs key는 팀당 개수 제한이 있어 잘못 묶인 key를
+   버리는 비용이 크다. Environment는 TestFlight 전환까지 고려해 Sandbox & Production을 쓴다.
 3. 서버 담당자에게 Team ID, Key ID, Bundle ID, sandbox/production 환경을 알려준다.
 4. `.p8` 파일은 한 번만 다운로드할 수 있으므로 Git·메신저에 올리지 않고 secret manager 또는
    안전한 오프라인 경로로 서버에 전달한다.
 5. Swift target도 같은 Team/Bundle ID로 서명하고 Xcode에서 Push Notifications와 필요한
    background mode를 활성화한다.
+
+VoIP Services Certificate(`.p12`)는 만들지 않는다. 토큰 방식 `.p8` 하나로 sandbox와
+production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용한다. 값을 받으면 Swift 앱
+없이도 `uv run python -m scripts.check_apns`로 자격증명을 먼저 검증한다. 더미 토큰에 대한
+`BadDeviceToken` 응답이 성공 신호이고, `InvalidProviderToken`은 `.p8`/Key ID/Team ID 조합,
+`BadTopic`·`TopicDisallowed`는 Bundle ID 또는 App ID capability 문제다. Xcode 직접 설치
+빌드의 토큰은 sandbox에서만, TestFlight/App Store 빌드의 토큰은 production에서만 유효하다.
 
 ## 8. 다음 작업 우선순위
 
@@ -397,10 +433,11 @@ Admin에게 요청한다. 요청 범위는 다음과 같다.
    미달이면 YAMNet/검증된 cough classifier로 교체한다.
 2. 40-case Gemini eval을 `--start/--limit/--delay`로 quota-safe하게 완료하고 실패 fixture를
    prompt/schema에 반영한다.
-3. Swift Xcode project에서 `ios-call-flow.md` 기준 CallCoordinator/16-bit PCM writer/로컬
-   `ko-KR` TTS를 구현한다.
-4. APNs provider를 Apple sandbox에서 검증하고 실제 iPhone 양단 통화로 Track Egress와
-   네트워크 전환까지 E2E 검증한다.
+3. iOS 앱에 LiveKit Swift SDK를 SPM으로 추가하고 `ios-call-flow.md` 기준으로
+   `connectMedia`/오디오 세션 handler, 16-bit PCM writer, 로컬 `ko-KR` TTS를 채운다.
+   로그인 흐름을 붙여 `/devices` 자동 등록과 `/accept`가 동작하게 한다.
+4. 실제 iPhone 양단 통화로 Track Egress와 네트워크 전환까지 E2E 검증한다. APNs는
+   sandbox 실기기 CallKit 수신까지 2026-08-13에 검증했다.
 5. 실제 iPhone 20~30통으로 PCM 품질 gate/F0/기침 threshold와 time-slot 분포를 freeze한다.
 6. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다.
 7. SMS OTP와 일반 APNs 알림 provider를 붙인다.
@@ -437,3 +474,6 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-11: 되묻기 규칙 detector/event/API/report와 Deepgram word timing 보존 구현.
 - 2026-08-11: PCM AI-2 4종 prototype, analyzer version 저장, calendar-week baseline 수정.
 - 2026-08-11: Deepgram Aura 한국어 TTS 미지원을 확인하고 iOS local `ko-KR` TTS로 확정.
+- 2026-08-13: APNs 자격증명 점검 CLI `scripts/check_apns.py`와 Apple Developer/Xcode PushKit 설정 절차 추가.
+- 2026-08-13: 실제 Apple 자격증명으로 APNs sandbox 자격증명 점검 통과. 발급한 key는 sandbox 전용.
+- 2026-08-13: iOS Xcode project를 `ios/`로 추가하고 PushKit→CallKit 실기기 수신을 검증.

@@ -1,5 +1,6 @@
 # Secrets and local runtime state
 .env
+*-env.txt
 *.p8
 secrets/
 .data/
@@ -19,3 +20,9 @@ build/
 .DS_Store
 .idea/
 .vscode/
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
