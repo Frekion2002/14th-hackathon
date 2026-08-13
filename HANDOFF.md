@@ -223,6 +223,8 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
+| `backend/scripts/seed_demo_family.py` | 개발 OTP로 자녀-부모 초대·수락·동의·질환 프로필 생성 CLI |
+| `backend/deploy/livekit-local.yaml` | Docker 없이 실행하는 단일 노드 LiveKit 설정. Egress 없음 |
 | `backend/tests/test_api_flow.py` | 온보딩부터 분석·폐기·리포트까지 E2E API test |
 | `backend/tests/test_providers.py` | Deepgram/Gemini/APNs provider unit test |
 | `backend/tests/test_ai_pipeline.py` | prompt/repeat/acoustic/calendar-week deterministic test |
@@ -492,3 +494,4 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-13: 실제 Apple 자격증명으로 APNs sandbox 자격증명 점검 통과. 발급한 key는 sandbox 전용.
 - 2026-08-13: iOS Xcode project를 `ios/`로 추가하고 PushKit→CallKit 실기기 수신을 검증.
 - 2026-08-13: iOS 로그인·발신·수신 통화 화면과 LiveKit 연동, 질문 로컬 TTS 구현.
+- 2026-08-13: Docker 없이 실행하는 네이티브 LiveKit/MinIO 구성과 가족 seed 스크립트 추가.

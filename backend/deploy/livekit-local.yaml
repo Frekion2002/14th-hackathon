@@ -1,0 +1,34 @@
+# Docker 없이 개발 PC에서 직접 실행하는 단일 노드 설정.
+#   livekit-server --config deploy/livekit-local.yaml
+#
+# docker-compose용 deploy/livekit.yaml과 달리 Redis를 쓰지 않고, 컨테이너 이름 대신
+# 127.0.0.1로 backend를 부른다. LiveKit과 backend가 같은 Mac에서 돌기 때문에 webhook은
+# loopback으로 충분하다. 실기기는 ws://<개발-PC-LAN-IP>:7880으로 접속하므로
+# bind_addresses를 0.0.0.0으로 둔다.
+#
+# 이 설정에는 Egress worker가 없다. 통화와 실시간 오디오는 동작하지만 Track Egress 녹음과
+# 그 뒤의 STT/LLM/음향 파이프라인은 돌지 않는다. 녹음까지 검증하려면 docker-compose 스택을
+# 사용한다.
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+
+keys:
+  collog-dev-key: collog-dev-secret-change-before-production
+
+webhook:
+  api_key: collog-dev-key
+  urls:
+    - http://127.0.0.1:8080/v1/webhooks/livekit
+
+room:
+  empty_timeout: 60
+  departure_timeout: 20
+
+logging:
+  level: info

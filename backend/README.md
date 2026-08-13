@@ -82,6 +82,32 @@ docker compose up --build
 | MinIO API | `http://localhost:9000` |
 | MinIO console | `http://localhost:9001` |
 
+### Docker 없이 통화만 시험하기
+
+컨테이너 런타임이 없는 개발 PC에서는 LiveKit과 MinIO를 네이티브로 실행한다.
+
+```bash
+brew install livekit minio minio-mc
+
+livekit-server --config deploy/livekit-local.yaml
+MINIO_ROOT_USER=collog-minio MINIO_ROOT_PASSWORD=collog-minio-secret \
+  minio server ~/.collog/minio --address :9000
+mc alias set collog http://127.0.0.1:9000 collog-minio collog-minio-secret
+mc mb --ignore-existing collog/collog-audio
+
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8080
+```
+
+이 구성에는 Egress worker가 없다. 실시간 통화와 오디오는 동작하지만 Track Egress 녹음과
+그 뒤의 STT/LLM/음향 파이프라인은 돌지 않는다. 녹음까지 검증할 때에는 compose 스택을 쓴다.
+
+앱에는 아직 초대·동의·질환 프로필 화면이 없으므로, 실기기 통화를 시험하기 전에 자녀에게
+연결된 부모 계정을 만들어 둔다.
+
+```bash
+uv run python -m scripts.seed_demo_family --child-phone 01000000002
+```
+
 Egress는 LiveKit과 같은 Redis를 사용한다. 통화 수락 시 이미 publish된 자녀의 microphone
 track을 조회하고, 수락 뒤 publish되는 부모 track은 서명된 `track_published` 웹훅으로 받아
 각각 Opus/OGG Track Egress를 시작한다. `Participant Egress + OGG`는 비디오 transcode 경로와
