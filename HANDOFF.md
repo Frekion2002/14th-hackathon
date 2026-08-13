@@ -39,8 +39,10 @@
 
 ## 1. 우리가 만드는 것
 
-콜록은 자녀와 부모의 일상적인 통화를 self-hosted LiveKit VoIP로 연결하고, 부모의 사전 동의가
-있는 통화만 분석해 개인 내 건강 변화 기록으로 만드는 iOS 우선 앱이다.
+콜록은 가족의 일상적인 통화를 self-hosted LiveKit VoIP로 연결하고, 이번 통화 건강 주체의
+사전 동의가 있는 통화만 분석해 개인 내 건강 변화 기록으로 만드는 iOS 우선 앱이다. 부모
+건강 관리가 핵심 시연이지만 데이터 모델은 부모·자녀 어느 가족 구성원도 subject가 될 수 있게
+일반화한다.
 
 핵심은 진단이 아니라 변화 관찰이다.
 
@@ -59,6 +61,11 @@
 판단 근거가 아니다. 새 피그마가 부모·자녀 양방향 통화와 양쪽 건강 프로필을 전제로 하므로,
 현재 CHILD→PARENT 고정 모델을 일반화하기 위한 계약과 코드 차이는
 `backend/docs/profile-question-report-design.md`에 정리했다.
+
+2026-08-13 사용자는 별도로 결정할 수 없는 항목 외에는 권장 기본안을 채택했다. 양방향 통화,
+한 통화 한 subject(callee), 관계 기반 가족 role, 당사자 확인 프로필, 최소 전사 보관, template
+질문, observation 기반 리포트 등 확정 기본안과 단계별 완료 조건은
+`backend/docs/implementation-plan-v2.md`가 실행 기준이다.
 
 ## 2. 확정된 기술 전제
 
@@ -251,6 +258,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/docs/acoustic-design.md` | 음향 4종 정의, 품질 gate, model, worker와 검증 기준 |
 | `backend/docs/voice-health-model-research.md` | HeAR/기침 detector 판정, 유사 서비스 비교, 되묻기·난청 한계와 검증 설계 |
 | `backend/docs/profile-question-report-design.md` | 피그마 기준 건강 프로필→질문→통화 자기보고→주·월간 리포트 계약과 현재 코드 차이 |
+| `backend/docs/implementation-plan-v2.md` | 승인된 권장 기본값, Phase 0~7 구현 순서·완료 조건, 실제 질문이 필요한 외부 조건 |
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
@@ -516,33 +524,19 @@ production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용�
 
 ## 8. 다음 작업 우선순위
 
-1. `backend/docs/profile-question-report-design.md` 9절 순서대로 통화의 `subjectUserId`와
-   한 통화 한 subject 원칙을 확정한다. 새 피그마는 부모→자녀 통화도 보여주지만 현재 API와
-   데이터 모델은 CHILD→PARENT에 고정돼 있어 구현 전에 이 계약이 필요하다.
-2. 일반화한 건강 프로필에 질환·복용약·걱정 항목, 입력 출처, 당사자 확인 상태를 추가하고
-   초대/동의/프로필 순서를 확정한다. 현재는 부모 질환 코드 배열만 지원한다.
-3. 질문 template metadata/선택 이유를 확장하고 Q/A evidence 기반 건강 observation event와
-   주·월간 report v2를 구현한다. 프로필 사실, 통화 자기보고, 음향 관찰, 기간 집계를 API/UI에서
-   구분한다.
-4. 현재 cough `0.0 OK` 노출을 `UNMEASURABLE(DETECTOR_UNVALIDATED)`로 바꾸고,
-   `backend/docs/voice-health-model-research.md`의 설계대로 HeAR `event_detector_small`과 YAMNet을
-   동일 in-domain label set에서 비교한다. full `google/hear-pytorch`는 512차원 embedding만
-   출력하는 약 1.21GB ViT-L이라 cough count 경로에 쓰지 않는다.
-5. 40-case Gemini eval을 `--start/--limit/--delay`로 quota-safe하게 완료하고 실패 fixture를
-   prompt/schema에 반영한다.
-6. `backend/docs/two-iphone-e2e.md`의 고정 대화로 실제 iPhone 양단 통화를 하고
-   `scripts.verify_two_iphone_call`의 모든 check를 통과시킨다. APNs sandbox CallKit 수신은
-   한 대에서 검증됐고 양방향 음성, remote TTS 즉시 중단, 두 Egress는 아직이다.
-7. 통화 시작 직후 PCM 유실 여부를 대본과 전사로 확인하고, 재현되면 writer 부착 시점을
-   앞당기거나 짧은 pre-publish buffer를 둔다.
-8. iOS 초대·동의·질환/복용약/걱정 프로필 화면을 구현하고 개발 seed script 의존을 없앤다.
-9. 실제 iPhone 20~30통으로 PCM 품질 gate/F0/기침 threshold와 time-slot 분포를 freeze한다.
-10. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다. SMS OTP와
-    일반 APNs 알림 provider도 production 전환 때 붙인다.
+구현 순서와 phase별 완료 조건은 `backend/docs/implementation-plan-v2.md`를 따른다.
 
-제품 폐쇄 루프의 핵심은 1~3과 8이고, 실통화 인프라 증명은 6~7이다. 기침은 보조 지표이므로
-4가 실패해도 검증되지 않은 값을 숨기면 핵심 demo를 막지 않는다. 9는 음향 신뢰도 보강,
-10과 DB migration/TLS/secret manager는 production 전환 작업이다.
+1. Phase 0: 미검증 cough 노출 차단, subject 계약 fixture, migration 기반 준비
+2. Phase 1: 관계 기반 가족/subject와 질환·복용약·걱정 프로필/동의 철회
+3. Phase 2: subject 기반 양방향 통화와 기존 iOS adapter
+4. Phase 3: anchor+dynamic 질문 정책과 ElevenLabs
+5. Phase 4: Q/A evidence 추출, 전체 transcript purge
+6. Phase 5: observation 기반 통화 결과·주간·월간 리포트/공유
+7. Phase 6: 실제 label/기기 검증을 통과한 음향값만 보조 연결
+8. Phase 7: 피그마 iOS 흐름과 두 iPhone 전체 E2E
+
+기침은 보조 지표이므로 Phase 6의 모델 검증이 실패해도 값을 숨기면 핵심 demo를 막지 않는다.
+외부 자격증명이나 법무 승인처럼 코드로 결정할 수 없는 조건만 해당 phase에서 사용자에게 묻는다.
 
 다음 AI는 구현 전에 반드시 이 문서와 `backend/README.md`, 관련 service/test를 먼저 읽는다.
 API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, 판단 불가능한 건강 지표를 임의의
@@ -594,5 +588,7 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-13: 새 피그마 흐름을 기준으로 제품 중심축을 본인 확인 건강 프로필→맞춤 질문→통화
   자기보고→주·월간 리포트로 확정. 부모/자녀 양방향 subject 모델, 복용약·걱정·입력 출처·본인
   확인, Q/A 근거 추출, 리포트 출처 분리를 설계하고 현재 코드와의 차이를 기록.
+- 2026-08-13: 사용자가 결정 불가능 항목 외 권장 기본안을 승인. 관계 기반 role, callee subject,
+  최소 전사 보관, template 질문, observation report 등 기본안과 Phase 0~7 실행 계획을 확정.
   cough rate를 통화 표본 내 환산값으로 제한하고, 표준 질문 기반 대화 변화와 선택적 HealthKit
   활동 추세를 결합하는 후속 제품 방향을 `voice-health-model-research.md`에 추가.
