@@ -112,6 +112,8 @@ fixture에서 실제 계산되고 기준선까지 흐르지만 기침 수치를 
 - 연결 대기 질문 `ttsMode=IOS_LOCAL` 계약과 Swift `AVSpeechSynthesizer(ko-KR)` 예제
 - APNs 자격증명 점검·실기기 발송 CLI와 sandbox 실기기 CallKit 수신 검증
 - iOS 앱 골격. PushKit 토큰 발급, VoIP push 수신, CallKit 수신 화면 표시까지 실기기 동작
+- iOS 개발 OTP 로그인, 기기 자동 등록, 가족 목록 발신, 발신·수신 공통 통화 화면
+- iOS LiveKit room 접속과 CallKit 세션 활성화 후 마이크 publish, 연결 대기 질문 `ko-KR` TTS
 
 ### 의도적으로 미완료
 
@@ -127,11 +129,14 @@ fixture에서 실제 계산되고 기준선까지 흐르지만 기침 수치를 
 - 현재 발급한 `.p8`는 **sandbox 전용**이다. production endpoint는 `BadEnvironmentKeyInToken`
   으로 거부된다. Xcode 직접 설치 빌드 데모에는 문제가 없지만 TestFlight/App Store 빌드로
   넘어가려면 Sandbox & Production key를 새로 발급해야 한다.
-- Swift 앱의 통화 미디어. LiveKit Swift SDK를 SPM으로 추가하지 않았고
-  `VoipCallCenter.connectMedia`/`disconnectMedia`와 오디오 세션 handler가 로그만 남기는
-  stub이다. 분석용 PCM writer와 로컬 `ko-KR` TTS도 아직 없다.
-- Swift 앱의 로그인 흐름. `CollogAPI.accessToken`이 비어 있어 `/devices` 자동 등록과
-  `/accept` 호출이 동작하지 않는다. 현재는 화면에 표시된 토큰을 수동으로 사용한다.
+- iOS 분석용 PCM writer. `LocalAudioTrack.add(audioRenderer:)`로 48 kHz mono 16-bit WAV를
+  만들고 `/raw-audio/upload-url` → PUT → `/raw-audio/complete`로 올리는 경로가 아직 없다.
+  따라서 현재 앱만으로는 음향 분석 파이프라인이 돌지 않는다.
+- iOS 앱의 초대·동의·질환 프로필 화면. 부모 계정은 백엔드 API로 먼저 만들어야 하며
+  앱에서는 로그인과 수신만 가능하다.
+- iOS 토큰 저장은 `UserDefaults`다. 실사용 배포 전 Keychain으로 옮긴다.
+- iOS 통화 화면의 실기기 검증. 빌드와 계약은 맞췄지만 양단 통화, 오디오 라우팅,
+  질문 TTS 즉시 중단은 실제 iPhone 2대로 확인해야 한다.
 - APNs 토큰 410/Unregistered 시 DB device 비활성화. 현재 발송 실패를 로그로 남긴다.
 - 내구성 있는 작업 큐. 현재 분석 재시도/정리는 FastAPI process의 background task다.
 
@@ -229,13 +234,22 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 
 | 파일 | 역할 |
 |---|---|
-| `ios/Collog.xcodeproj` | Xcode project. Bundle ID `com.Collog`, deployment target iOS 26.5 |
+| `ios/Collog.xcodeproj` | Xcode project. Bundle ID `com.Collog`, deployment target iOS 26.5, LiveKit SPM |
 | `ios/Collog/CollogApp.swift` | `AppDelegate`로 실행 초기 PushKit/APNs 등록과 remote token 수신 |
-| `ios/Collog/VoipCallCenter.swift` | PushKit VoIP 수신, CallKit 보고, 수락/거절/종료 시 backend 호출 |
-| `ios/Collog/CollogAPI.swift` | `/devices`, `/accept`, `/decline`, `/end` REST client |
-| `ios/Collog/ContentView.swift` | 개발용 토큰 확인 화면. VoIP/APNs 토큰 표시와 복사 |
+| `ios/Collog/VoipCallCenter.swift` | PushKit 수신, CallKit 발신/수신 action, LiveKit room 접속과 마이크 publish |
+| `ios/Collog/CollogAPI.swift` | OTP/기기/가족/통화 REST client와 서버 오류 message 파싱 |
+| `ios/Collog/AppSession.swift` | 로그인 세션·가족 구성원 상태. 토큰과 backend URL을 UserDefaults에 보관 |
+| `ios/Collog/RingingQuestionSpeaker.swift` | 연결 대기 질문의 `ko-KR` 로컬 TTS 재생/즉시 중단 |
+| `ios/Collog/ContentView.swift` | 로그인 분기, 홈(가족 목록·발신 버튼), 개발용 토큰 확인 섹션 |
+| `ios/Collog/LoginView.swift` | 개발 OTP 로그인과 backend base URL 입력 |
+| `ios/Collog/CallView.swift` | 발신·수신 공통 통화 화면. 오늘의 질문과 종료 버튼 |
 | `ios/Collog/Collog.entitlements` | `aps-environment` push entitlement |
-| `ios/Collog/Info.plist` | `UIBackgroundModes` = `voip`, `audio` |
+| `ios/Collog/Info.plist` | `UIBackgroundModes` = `voip`, `audio`와 마이크 사용 설명 |
+
+발신도 CallKit `CXStartCallAction`을 거친다. 그래야 `didActivate`에서 오디오 세션을 받는
+경로가 발신·수신 모두 같아진다. LiveKit `isAutomaticConfigurationEnabled`는 꺼져 있고
+엔진은 `.none`으로 시작하므로, CallKit이 세션을 활성화하기 전에는 오디오 장치를 잡지 않는다.
+room 접속과 마이크 publish는 분리되어 있고 publish는 `didActivate` 이후에만 실행한다.
 
 `project.pbxproj`에 `DEVELOPMENT_TEAM`이 고정되어 있다. 같은 Apple Developer 팀에 초대되지
 않은 팀원은 Signing & Capabilities에서 자기 팀으로 바꿔 빌드하고 그 변경은 커밋하지 않는다.
@@ -477,3 +491,4 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-13: APNs 자격증명 점검 CLI `scripts/check_apns.py`와 Apple Developer/Xcode PushKit 설정 절차 추가.
 - 2026-08-13: 실제 Apple 자격증명으로 APNs sandbox 자격증명 점검 통과. 발급한 key는 sandbox 전용.
 - 2026-08-13: iOS Xcode project를 `ios/`로 추가하고 PushKit→CallKit 실기기 수신을 검증.
+- 2026-08-13: iOS 로그인·발신·수신 통화 화면과 LiveKit 연동, 질문 로컬 TTS 구현.
