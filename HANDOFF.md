@@ -44,7 +44,7 @@
 
 핵심은 진단이 아니라 변화 관찰이다.
 
-- 질환 프로필을 바탕으로 다음 통화 질문을 제안한다.
+- 당사자가 확인한 질환·복용약·걱정 프로필을 바탕으로 다음 통화 질문을 제안한다.
 - 부모/자녀 음성을 분리해 Deepgram Nova-3 한국어 STT를 수행한다.
 - Gemini가 직접 언급된 증상·복약·활동·수면만 구조화한다.
 - 발화 속도, 휴지 비율, 기본주파수 변동, 기침 이벤트를 개인의 같은 시간대 기준선과 비교한다.
@@ -53,6 +53,12 @@
 
 제품의 절대 금지선은 질환 진단, 위험군 라벨, 응급도 판단, 치료 지시를 모델 출력으로 만드는
 것이다. 현재 LLM 시스템 지시와 응답 schema도 이 원칙에 맞춰져 있다.
+
+제품의 중심 데이터 흐름은 `본인 확인 프로필 → 검수된 맞춤 질문 → 통화 자기보고 구조화 →
+주·월간 변화 리포트`다. 기침/발화/휴지/F0는 이 흐름을 보조하는 음향 관찰이며 제품의 단독
+판단 근거가 아니다. 새 피그마가 부모·자녀 양방향 통화와 양쪽 건강 프로필을 전제로 하므로,
+현재 CHILD→PARENT 고정 모델을 일반화하기 위한 계약과 코드 차이는
+`backend/docs/profile-question-report-design.md`에 정리했다.
 
 ## 2. 확정된 기술 전제
 
@@ -86,10 +92,12 @@
 | 백엔드 P0 API | prototype 완료 | 인증·초대·동의·통화·LiveKit·리포트·정리 loop 구현. 운영용 SMS/worker/migration/실배포 검증은 별도 |
 
 백엔드/AI 해커톤 prototype의 미구현 코드는 크게 줄었고, 2026-08-13에 실기기 통화로
-STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 핵심은 음향 지표의 신뢰도다.
-네 지표 중 실제로 값이 나오는 것은 발화 속도뿐이며, 휴지 비율은 구조적으로 0에 가깝고
-기침은 탐지되지 않는다. 어떤 음향 수치도 의료 검증값으로 소개해서는 안 된다.
-근거와 보정 계획은 `backend/docs/calibration-todo.md`에 있다.
+STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 새 피그마의 양방향 통화·양쪽
+건강 프로필·복용약·걱정 항목·근거 기반 리포트 계약은 아직 현재 CHILD→PARENT prototype에
+반영되지 않았다. 음향 네 지표 중 실제로 값이 나오는 것은 발화 속도뿐이며, 휴지 비율은
+구조적으로 0에 가깝고 기침은 탐지되지 않는다. 어떤 음향 수치도 의료 검증값으로 소개해서는
+안 된다. 제품 차이는 `backend/docs/profile-question-report-design.md`, 음향 근거와 보정 계획은
+`backend/docs/calibration-todo.md`에 있다.
 
 ### 완료
 
@@ -123,6 +131,12 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 �
 
 ### 의도적으로 미완료
 
+- **새 피그마와 현재 백엔드의 건강 주체 모델이 다르다.** 현재 API는 자녀 발신·부모 분석,
+  부모 질환 코드 배열에 고정돼 있다. 부모/자녀 양방향 subject, 복용약·걱정·출처·본인 확인,
+  Q/A 관찰 event와 리포트 v2는 설계만 완료됐다.
+- **전체 STT segment 보관과 동의 문구가 불일치할 수 있다.** 성공 통화도 `transcripts.segments`에
+  전체 전사를 저장하지만 화면은 구조화 항목만 기록한다고 안내한다. 보관 기간과 최소 evidence
+  정책을 결정하고 코드/동의 문서를 함께 맞춰야 한다.
 - **기침 detector는 현재 재현율이 사실상 0이다.** 합성 검증에서 +40 dB 폭발음도 탐지되지
   않았고, 점수 분해 결과 energy(가중 0.40)와 crest(0.15) 항이 구조적으로 죽어 있어 임계값
   0.65에 도달할 수 없다. `0.0 OK`로 저장되므로 "기침 없음"으로 오독될 위험이 있다.
@@ -236,6 +250,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/docs/ai-transcript-design.md` | LLM 위치/prompt v2/eval과 되묻기 규칙 detector 설계 |
 | `backend/docs/acoustic-design.md` | 음향 4종 정의, 품질 gate, model, worker와 검증 기준 |
 | `backend/docs/voice-health-model-research.md` | HeAR/기침 detector 판정, 유사 서비스 비교, 되묻기·난청 한계와 검증 설계 |
+| `backend/docs/profile-question-report-design.md` | 피그마 기준 건강 프로필→질문→통화 자기보고→주·월간 리포트 계약과 현재 코드 차이 |
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
@@ -501,25 +516,33 @@ production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용�
 
 ## 8. 다음 작업 우선순위
 
-1. 현재 cough `0.0 OK` 노출을 `UNMEASURABLE(DETECTOR_UNVALIDATED)`로 바꾸고,
+1. `backend/docs/profile-question-report-design.md` 9절 순서대로 통화의 `subjectUserId`와
+   한 통화 한 subject 원칙을 확정한다. 새 피그마는 부모→자녀 통화도 보여주지만 현재 API와
+   데이터 모델은 CHILD→PARENT에 고정돼 있어 구현 전에 이 계약이 필요하다.
+2. 일반화한 건강 프로필에 질환·복용약·걱정 항목, 입력 출처, 당사자 확인 상태를 추가하고
+   초대/동의/프로필 순서를 확정한다. 현재는 부모 질환 코드 배열만 지원한다.
+3. 질문 template metadata/선택 이유를 확장하고 Q/A evidence 기반 건강 observation event와
+   주·월간 report v2를 구현한다. 프로필 사실, 통화 자기보고, 음향 관찰, 기간 집계를 API/UI에서
+   구분한다.
+4. 현재 cough `0.0 OK` 노출을 `UNMEASURABLE(DETECTOR_UNVALIDATED)`로 바꾸고,
    `backend/docs/voice-health-model-research.md`의 설계대로 HeAR `event_detector_small`과 YAMNet을
    동일 in-domain label set에서 비교한다. full `google/hear-pytorch`는 512차원 embedding만
    출력하는 약 1.21GB ViT-L이라 cough count 경로에 쓰지 않는다.
-2. 40-case Gemini eval을 `--start/--limit/--delay`로 quota-safe하게 완료하고 실패 fixture를
+5. 40-case Gemini eval을 `--start/--limit/--delay`로 quota-safe하게 완료하고 실패 fixture를
    prompt/schema에 반영한다.
-3. `backend/docs/two-iphone-e2e.md`의 고정 대화로 실제 iPhone 양단 통화를 하고
+6. `backend/docs/two-iphone-e2e.md`의 고정 대화로 실제 iPhone 양단 통화를 하고
    `scripts.verify_two_iphone_call`의 모든 check를 통과시킨다. APNs sandbox CallKit 수신은
    한 대에서 검증됐고 양방향 음성, remote TTS 즉시 중단, 두 Egress는 아직이다.
-4. 통화 시작 직후 PCM 유실 여부를 대본과 전사로 확인하고, 재현되면 writer 부착 시점을
+7. 통화 시작 직후 PCM 유실 여부를 대본과 전사로 확인하고, 재현되면 writer 부착 시점을
    앞당기거나 짧은 pre-publish buffer를 둔다.
-5. iOS 초대·동의·질환 프로필 화면을 구현하고 개발 seed script 의존을 없앤다.
-6. 실제 iPhone 20~30통으로 PCM 품질 gate/F0/기침 threshold와 time-slot 분포를 freeze한다.
-7. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다.
-8. SMS OTP와 일반 APNs 알림 provider를 붙인다.
+8. iOS 초대·동의·질환/복용약/걱정 프로필 화면을 구현하고 개발 seed script 의존을 없앤다.
+9. 실제 iPhone 20~30통으로 PCM 품질 gate/F0/기침 threshold와 time-slot 분포를 freeze한다.
+10. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다. SMS OTP와
+    일반 APNs 알림 provider도 production 전환 때 붙인다.
 
-해커톤 핵심 demo 완료 기준은 1~4다. backend/AI 코드는 prototype 수준으로 구현됐고, 이제
-주된 blocker는 실제 label 음원과 iPhone 2대 검증이다. 5는 앱 UX 완성, 6은 신뢰도 보강,
-7~8과 DB migration/TLS/secret manager는 production 전환 작업이다.
+제품 폐쇄 루프의 핵심은 1~3과 8이고, 실통화 인프라 증명은 6~7이다. 기침은 보조 지표이므로
+4가 실패해도 검증되지 않은 값을 숨기면 핵심 demo를 막지 않는다. 9는 음향 신뢰도 보강,
+10과 DB migration/TLS/secret manager는 production 전환 작업이다.
 
 다음 AI는 구현 전에 반드시 이 문서와 `backend/README.md`, 관련 service/test를 먼저 읽는다.
 API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, 판단 불가능한 건강 지표를 임의의
@@ -568,5 +591,8 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   Swaasa/Sonde/Winterlight/hearWHO를 조사. cough count는 HeAR Small/YAMNet bake-off로 결정하고,
   되묻기는 난청 판정이 아닌 문맥적 대화 수리 관찰값으로 제한하기로 정리.
 - 2026-08-13: PCM은 비압축 sample 형식이지만 iOS voice processing을 이미 거칠 수 있음을 명시.
+- 2026-08-13: 새 피그마 흐름을 기준으로 제품 중심축을 본인 확인 건강 프로필→맞춤 질문→통화
+  자기보고→주·월간 리포트로 확정. 부모/자녀 양방향 subject 모델, 복용약·걱정·입력 출처·본인
+  확인, Q/A 근거 추출, 리포트 출처 분리를 설계하고 현재 코드와의 차이를 기록.
   cough rate를 통화 표본 내 환산값으로 제한하고, 표준 질문 기반 대화 변화와 선택적 HealthKit
   활동 추세를 결합하는 후속 제품 방향을 `voice-health-model-research.md`에 추가.
