@@ -265,6 +265,8 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/docs/voice-health-model-research.md` | HeAR/기침 detector 판정, 유사 서비스 비교, 되묻기·난청 한계와 검증 설계 |
 | `backend/docs/profile-question-report-design.md` | 피그마 기준 건강 프로필→질문→통화 자기보고→주·월간 리포트 계약과 현재 코드 차이 |
 | `backend/docs/implementation-plan-v2.md` | 승인된 권장 기본값, Phase 0~7 구현 순서·완료 조건, 실제 질문이 필요한 외부 조건 |
+| `backend/docs/service-proposal-outline.md` | 초기 서비스 기획안을 개조식으로 재구성하고 현재 제품·구현·검증 상태에 맞춰 정정한 문서 |
+| `output/pdf/collog-service-proposal-outline.pdf` | 팀 공유·검토용 개조식 서비스 기획안 PDF 산출물 |
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
@@ -601,3 +603,5 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   분석을 항상 활성화하기로 확정.
 - 2026-08-13: cough rate를 통화 표본 내 환산값으로 제한하고, 표준 질문 기반 대화 변화와 선택적 HealthKit
   활동 추세를 결합하는 후속 제품 방향을 `voice-health-model-research.md`에 추가.
+- 2026-08-13: 초기 서비스 기획안을 개조식으로 재구성. 중복을 제거하고 양 참여자 분석,
+  필수 온보딩 동의, Deepgram/Gemini 역할, 근거 기반 리포트, 미검증 음향값 비노출을 반영.
