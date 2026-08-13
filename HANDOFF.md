@@ -62,10 +62,16 @@
 현재 CHILD→PARENT 고정 모델을 일반화하기 위한 계약과 코드 차이는
 `backend/docs/profile-question-report-design.md`에 정리했다.
 
-2026-08-13 사용자는 별도로 결정할 수 없는 항목 외에는 권장 기본안을 채택했다. 양방향 통화,
-한 통화 한 subject(callee), 관계 기반 가족 role, 당사자 확인 프로필, 최소 전사 보관, template
-질문, observation 기반 리포트 등 확정 기본안과 단계별 완료 조건은
+2026-08-13 사용자는 별도로 결정할 수 없는 항목 외에는 권장 기본안을 채택했다. 이후 한 통화의
+상대방 한 명만 분석하는 초기안보다 caller/callee 두 참여자를 모두 각자의 건강 subject로
+분석하는 안을 선택했다. 연결 질문 target은 callee로 유지한다. 관계 기반 가족 role, 당사자
+확인 프로필, 최소 전사 보관, template 질문, observation 기반 리포트 등 확정 기본안과 완료
+조건은
 `backend/docs/implementation-plan-v2.md`가 실행 기준이다.
+
+필수 분석 동의는 앱 최초 온보딩 완료 조건이다. 정상 통화에서는 양 참여자 분석을 항상
+활성화하지만 서버 consent 검증을 제거하지 않는다. 동의 record가 없거나 철회/구버전이면 분석
+없는 통화를 허용하지 않고 `CONSENT_REQUIRED`로 온보딩에 돌려보낸다.
 
 ## 2. 확정된 기술 전제
 
@@ -139,8 +145,8 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 �
 ### 의도적으로 미완료
 
 - **새 피그마와 현재 백엔드의 건강 주체 모델이 다르다.** 현재 API는 자녀 발신·부모 분석,
-  부모 질환 코드 배열에 고정돼 있다. 부모/자녀 양방향 subject, 복용약·걱정·출처·본인 확인,
-  Q/A 관찰 event와 리포트 v2는 설계만 완료됐다.
+  부모 질환 코드 배열에 고정돼 있다. 부모/자녀 양방향 통화와 양 참여자 동시 분석,
+  복용약·걱정·출처·본인 확인, Q/A 관찰 event와 리포트 v2는 설계만 완료됐다.
 - **전체 STT segment 보관과 동의 문구가 불일치할 수 있다.** 성공 통화도 `transcripts.segments`에
   전체 전사를 저장하지만 화면은 구조화 항목만 기록한다고 안내한다. 보관 기간과 최소 evidence
   정책을 결정하고 코드/동의 문서를 함께 맞춰야 한다.
@@ -528,7 +534,7 @@ production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용�
 
 1. Phase 0: 미검증 cough 노출 차단, subject 계약 fixture, migration 기반 준비
 2. Phase 1: 관계 기반 가족/subject와 질환·복용약·걱정 프로필/동의 철회
-3. Phase 2: subject 기반 양방향 통화와 기존 iOS adapter
+3. Phase 2: `CallParticipant` 기반 양 참여자 분석·양방향 통화와 기존 iOS adapter
 4. Phase 3: anchor+dynamic 질문 정책과 ElevenLabs
 5. Phase 4: Q/A evidence 추출, 전체 transcript purge
 6. Phase 5: observation 기반 통화 결과·주간·월간 리포트/공유
@@ -590,5 +596,8 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   확인, Q/A 근거 추출, 리포트 출처 분리를 설계하고 현재 코드와의 차이를 기록.
 - 2026-08-13: 사용자가 결정 불가능 항목 외 권장 기본안을 승인. 관계 기반 role, callee subject,
   최소 전사 보관, template 질문, observation report 등 기본안과 Phase 0~7 실행 계획을 확정.
-  cough rate를 통화 표본 내 환산값으로 제한하고, 표준 질문 기반 대화 변화와 선택적 HealthKit
+- 2026-08-13: 한 통화의 caller/callee를 모두 각자의 건강 subject로 동시 분석하도록 변경.
+  질문 target은 callee로 유지하고, 필수 동의를 온보딩 진입 조건으로 삼아 정상 통화는 양쪽
+  분석을 항상 활성화하기로 확정.
+- 2026-08-13: cough rate를 통화 표본 내 환산값으로 제한하고, 표준 질문 기반 대화 변화와 선택적 HealthKit
   활동 추세를 결합하는 후속 제품 방향을 `voice-health-model-research.md`에 추가.

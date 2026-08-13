@@ -62,23 +62,30 @@
 안전한 MVP 순서는 `초대 → 당사자 동의 → 당사자 입력 또는 가족 제안 확인`이다. 피그마의
 선입력을 유지해야 한다면 서버 확정 데이터로 취급하지 않는 별도 draft 정책을 먼저 결정한다.
 
-## 4. 통화와 건강 주체
+## 4. 통화 참여자와 분석 주체
 
 현재 구현은 `CallRecord(parent_id, child_id)`와 `POST /calls`의 CHILD-only 검사로 자녀 발신,
-부모 분석에 고정돼 있다. 새 화면처럼 양쪽이 서로 전화하려면 다음 세 식별자를 분리한다.
+부모 분석에 고정돼 있다. 확정 제품안은 양쪽이 서로 전화하고 한 통화의 두 참여자를 모두
+각자의 건강 분석 주체로 처리한다. 다음 식별자를 분리한다.
 
 - `callerUserId`: 전화를 건 사람
 - `calleeUserId`: 전화를 받은 사람
-- `subjectUserId`: 이번 질문과 분석이 다루는 한 사람
+- `analysisSubjectUserIds`: 분석할 두 참여자
+- `questionTargetUserId`: 연결 질문이 다루는 통화 상대방(callee)
 
-권장 규칙은 홈에서 선택한 가족 구성원, 즉 통화 상대를 이번 통화의 `subjectUserId`로 두는
-것이다. 그러면 자녀가 부모에게 걸면 부모가, 부모가 자녀에게 걸면 자녀가 건강 주체가 된다.
-한 통화에서 두 사람을 동시에 분석하면 질문·동의·리포트 소유권이 모호해지므로 MVP에서는
-한 통화당 한 명으로 제한한다.
+질문 UX와 분석 범위는 분리한다. 연결 중 ElevenLabs가 발신자에게 알려주는 질문은 callee의
+프로필을 기준으로 하지만, 통화가 끝나면 caller와 callee의 직접 건강 발화를 각각 분리해 두
+사람의 타임라인과 리포트에 저장한다. 개인 fact에는 계속 `subjectUserId`를 두어 소유권을
+명확히 한다.
 
-이 변경 시 STT/LLM도 `PARENT`라는 고정 화자명이 아니라 `SUBJECT`와 `FAMILY`를 사용하고,
-PCM/음향 분석은 subject track에만 수행해야 한다. subject의 유효한 분석 동의가 없으면 통화는
-가능하되 녹음·전사·분석은 전부 비활성화한다.
+`CallParticipant(callId, userId, role, analysisStatus, speechSec)`처럼 참여자별 처리 상태가
+필요하다. 두 track을 각각 STT/음향 분석하고, Gemini 결과도 fact마다 정확한 subject를 지정한다.
+한 사람의 발화가 부족하거나 분석이 실패해도 다른 사람의 결과는 정상 완료돼야 한다. 두
+참여자의 분석이 모두 terminal 상태가 된 뒤에 원본 오디오와 전체 transcript를 폐기한다.
+
+최신 필수 분석 동의는 앱 최초 온보딩 완료 조건이다. 따라서 정상 생성된 통화는 두 참여자의
+분석이 항상 활성화된다. 서버의 동의 검증 자체를 제거하지는 않으며, 동의 record가 없거나
+철회·구버전이면 분석 없는 통화를 만들지 않고 `CONSENT_REQUIRED`로 온보딩에 돌려보낸다.
 
 ## 5. 질문 정책
 
@@ -94,7 +101,7 @@ PCM/음향 분석은 subject track에만 수행해야 한다. subject의 유효�
 
 ### 출력
 
-- `questionId`, `subjectUserId`, `topic`, `text`, `selectionReason`
+- `questionId`, `targetUserId`, `topic`, `text`, `selectionReason`
 - `anchorGroup`, `templateVersion`, `profileItemIds`
 - ElevenLabs TTS asset URL과 장애 시 iOS local fallback
 
@@ -118,16 +125,16 @@ Gemini는 실시간 통화 경로에 둘 필요가 없다. 프로필이 바뀌�
 Deepgram 전사는 기록의 입력이지 건강 사실 그 자체가 아니다. 통화 후 아래 순서로 처리한다.
 
 1. 양 화자 track을 각각 STT하고 시간축으로 합친다.
-2. subject 발화와 직전 가족 질문을 묶어 question-answer pair를 만든다.
-3. Gemini가 `symptom`, `medication`, `activity`, `sleep`, 이후 `function/nutrition` 범주를
-   구조화한다.
+2. 각 참여자의 발화와 직전 상대방 질문을 묶어 question-answer pair를 만든다.
+3. Gemini가 두 참여자별로 `symptom`, `medication`, `activity`, `sleep`, 이후
+   `function/nutrition` 범주를 구조화한다.
 4. 각 fact에 `subjectUserId`, `questionId`, `polarity`, `evidenceSegmentIds`, `observedAt`,
    `schemaVersion`을 저장한다.
 5. 존재하지 않는 segment, 다른 화자의 추측, 진단·원인·치료 문장은 validator가 제거한다.
 
-현재 prompt는 안전을 위해 `응/아니/괜찮아`만으로 가족의 질문 내용을 사실화하지 않는다.
+현재 prompt는 안전을 위해 `응/아니/괜찮아`만으로 상대방의 질문 내용을 사실화하지 않는다.
 실사용에서 짧은 답을 지원하려면 단순히 이 제한을 풀지 말고, 실제로 인접한 질문 segment와
-subject 답 segment를 함께 근거로 참조하는 Q/A schema 및 eval fixture를 먼저 추가한다.
+답변자의 segment를 함께 근거로 참조하는 Q/A schema 및 eval fixture를 먼저 추가한다.
 
 개인정보 안내와 맞추려면 원본 오디오뿐 아니라 전체 전사 보관 여부도 명시해야 한다. 현재
 구현은 성공한 통화의 전체 segment 전사를 DB에 저장한다. 화면 문구가 `구조화된 대화 항목만
@@ -157,22 +164,23 @@ subject 답 segment를 함께 근거로 참조하는 Q/A schema 및 eval fixture
 |---|---|---|
 | 프로필 | 부모별 질환 코드 배열 | 모든 사용자 subject 프로필, 약/걱정/출처/본인 확인 |
 | 초대 전 입력 | 동의 전 프로필 저장 차단 | 현재 안전 규칙 유지 또는 별도 draft 정책 결정 |
-| 통화 방향 | CHILD → PARENT 고정 | caller/callee/subject 분리, 양방향 권한 |
+| 통화 방향 | CHILD → PARENT, 부모만 분석 | caller/callee와 양 참여자 분석, 질문 target 분리 |
 | 질문 | 질환별 정적 pool, 하루 2개 | 약·걱정·이전 답 반영, selection reason/anchor version |
-| 추출 | 부모-only 4범주와 parent evidence | subject 중심 Q/A evidence, 기능/영양 확장 검토 |
+| 추출 | 부모-only 단일 결과 | 참여자별 Q/A evidence, 기능/영양 확장 검토 |
 | 전사 보관 | 전체 segment JSON 저장 | 동의 문구와 보관 정책 정합화 |
 | 리포트 | 범주별 문자열 배열+음향 points | typed event 변화, 출처/근거/데이터 충분성 표시 |
 | 음향 | 4종 prototype | content report의 보조 레이어, 미검증값 숨김 |
 
 ## 9. 구현 순서
 
-1. `subject`가 누구인지와 한 통화 한 subject 원칙을 제품 계약으로 확정한다.
+1. 두 참여자 모두 분석하고 연결 질문 target은 callee라는 계약을 API fixture로 고정한다.
 2. 일반화한 프로필/질환/복용약/걱정 데이터 모델과 본인 확인 상태를 추가한다.
-3. 초대·동의·프로필 작성 순서를 확정하고 API를 피그마 흐름에 맞춘다.
-4. 질문 template metadata와 deterministic selector를 확장한다.
-5. Q/A evidence 기반 추출 schema/eval을 추가한다.
-6. 건강 observation event 기반 주·월간 report v2를 구현한다.
-7. 마지막에 검증된 음향 지표만 보조 카드로 연결한다.
+3. 필수 동의 온보딩과 양방향 통화 API를 피그마 흐름에 맞춘다.
+4. `CallParticipant`별 STT/추출/음향 상태와 purge barrier를 구현한다.
+5. 질문 template metadata와 deterministic selector를 확장한다.
+6. 참여자별 Q/A evidence 기반 추출 schema/eval을 추가한다.
+7. 건강 observation event 기반 주·월간 report v2를 구현한다.
+8. 마지막에 검증된 음향 지표만 보조 카드로 연결한다.
 
 HealthKit은 이 중심 흐름의 필수 요건이 아니다. 나중에 사용자가 별도 권한을 허용할 때 활동·
 수면 추세를 보강하는 선택 기능으로 두며, 해커톤 MVP는 프로필·질문·통화 자기보고·리포트의

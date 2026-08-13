@@ -15,11 +15,14 @@
 - `부모/자녀`는 전역 사용자 role이 아니라 가족 안의 관계다. 한 사용자가 어떤 가족에서는
   자녀이고 다른 가족에서는 부모일 수 있다.
 - 통화는 양방향이다.
-- 한 통화에는 건강 분석 대상 `subjectUserId`가 한 명만 존재한다.
-- MVP에서는 홈에서 선택한 통화 상대방, 즉 callee를 subject로 자동 지정한다.
-- caller와 callee의 음성을 분리하되 STT/LLM/음향 건강 사실은 subject를 기준으로 계산한다.
-- subject가 유효하게 분석에 동의하지 않았으면 일반 통화는 허용하고 녹음·전사·음향·리포트만
-  끈다.
+- 한 통화의 caller와 callee를 모두 각자의 건강 분석 주체로 처리한다.
+- 연결 질문 target은 홈에서 선택한 통화 상대방(callee)이다. 질문 target과 분석 subject 범위를
+  분리한다.
+- 두 사람의 음성을 분리해 STT/LLM/음향 결과와 리포트를 각자 소유하게 한다.
+- 최신 필수 분석 동의는 앱 최초 온보딩 완료 조건이다. 동의가 없거나 철회된 계정은 홈/통화에
+  진입시키지 않으므로 정상 통화는 항상 양 참여자 분석이 활성화된다.
+- 서버는 각 통화에서 두 consent snapshot을 검증한다. 누락 시 분석 없는 통화를 허용하지 않고
+  `CONSENT_REQUIRED`로 온보딩에 돌려보낸다.
 
 ### 인증·초대·동의
 
@@ -57,7 +60,9 @@
 ### STT·LLM·보관
 
 - Deepgram으로 양쪽 track을 전사하고 시간축으로 합쳐 질문 문맥을 복원한다.
-- 건강 fact는 subject 발화 또는 검증된 question-answer pair에서만 생성한다.
+- 건강 fact는 각 참여자 자신의 발화 또는 검증된 question-answer pair에서만 생성한다.
+- Gemini는 quota와 attribution 오류를 줄이기 위해 한 구조화 요청에서 두 참여자의 fact를
+  `subjectUserId`별로 반환하며, validator가 evidence speaker와 subject 일치를 검사한다.
 - 짧은 `응/아니/괜찮아`는 실제로 인접한 질문과 연결되고 두 segment가 모두 근거일 때만
   해석한다.
 - MVP 추출 범주는 증상, 복약, 활동, 수면, 식사, 일상 기능이다.
@@ -103,14 +108,14 @@
 목표: 잘못된 건강값이 노출되는 상태를 먼저 제거하고 새 계약을 테스트로 고정한다.
 
 - cough `0.0 OK`를 `UNMEASURABLE(DETECTOR_UNVALIDATED)`로 전환
-- 현재 API flow와 새 subject flow의 golden fixture 작성
+- 현재 API flow와 두 참여자 분석 flow의 golden fixture 작성
 - 새 enum/source/consent/report 상태를 OpenAPI 초안에 반영
 - migration 도구와 test migration smoke test 추가
 
 완료 조건:
 
 - 검증되지 않은 cough가 리포트/API의 정상값으로 노출되지 않는다.
-- v2 fixture가 사용자 관계, subject, consent 경계를 명시한다.
+- v2 fixture가 사용자 관계, 양 참여자 subject, 필수 consent 경계를 명시한다.
 
 ### Phase 1 — 가족 그래프·건강 주체·프로필
 
@@ -134,20 +139,25 @@
 - 질환·약·걱정과 source/확인 상태가 round-trip 된다.
 - 다른 가족이나 미동의 사용자의 데이터에 접근할 수 없다.
 
-### Phase 2 — subject 기반 양방향 통화
+### Phase 2 — 양 참여자 분석 기반 양방향 통화
 
-목표: caller/callee/subject를 분리하고 기존 LiveKit 파이프라인을 보존한다.
+목표: caller/callee/question target을 분리하고 기존 LiveKit 파이프라인에서 양쪽을 분석한다.
 
-- `CallRecord`에 caller/callee/subject 의미를 명시
-- `/calls`에서 관계·차단·subject 동의를 검증
+- `CallRecord`에 caller/callee/question target 의미를 명시
+- `CallParticipant`에 user, caller/callee role, consent snapshot, speechSec, analysisStatus를 저장
+- `/calls`에서 관계·차단과 두 참여자의 최신 필수 동의를 검증
 - 양방향 APNs/CallKit 수신과 LiveKit token 발급
-- subject track 선택, subject PCM/STT/음향 처리
+- 양쪽 기기의 PCM upload 권한과 `AudioAsset.ownerUserId` 추가, Egress fallback 유지
+- 두 track의 STT/음향/추출을 참여자별로 저장
+- 한 사람의 제외/실패가 다른 사람의 성공 결과를 막지 않는 partial completion
+- 두 참여자의 분석이 terminal 상태일 때 원본 audio/transient transcript를 지우는 purge barrier
 - 기존 `/parents/*` adapter와 iOS client transition 계약 제공
 
 완료 조건:
 
-- A→B와 B→A 모두 통화되며 각 통화에서 callee만 health subject로 분석된다.
-- 동의하지 않은 subject 통화에서는 어떤 분석 asset도 생성되지 않는다.
+- A→B와 B→A 모두 통화되며 각 통화에서 두 사람의 결과가 각자 타임라인에 저장된다.
+- 한쪽이 발화 부족/분석 실패여도 다른 쪽의 성공 결과는 유지된다.
+- 최신 동의가 없는 사용자는 통화 생성/수락 전에 온보딩으로 이동한다.
 
 ### Phase 3 — 질문 정책·ElevenLabs
 
@@ -167,17 +177,18 @@
 
 ### Phase 4 — Q/A 근거 추출·최소 보관
 
-목표: 통화 내용이 근거 있는 health observation으로 변환되고 전체 전사는 남지 않게 한다.
+목표: 통화 내용이 참여자별 근거 있는 health observation으로 변환되고 전체 전사는 남지 않게 한다.
 
-- `SUBJECT/FAMILY` segment와 question-answer pair builder
-- 여섯 extraction category, polarity, questionId, evidence schema v3
+- userId가 붙은 segment와 양방향 question-answer pair builder
+- Gemini 한 요청/양 subject 결과, 여섯 category, polarity, questionId, evidence schema v3
+- subjectUserId와 evidence speaker가 다른 fact를 제거하는 validator
 - 짧은 응답, 정정, 부정, 질문 유도, prompt injection eval 확장
 - success 후 transcript purge/minimal evidence persistence
 - 실패 retry/idempotency와 purge 보장
 
 완료 조건:
 
-- 모든 fact가 실제 존재하는 근거 segment 또는 검증된 Q/A pair를 참조한다.
+- 두 사람의 모든 fact가 실제 존재하는 본인 근거 segment 또는 검증된 Q/A pair를 참조한다.
 - 다른 화자의 추측과 진단·원인·치료 문장이 저장되지 않는다.
 - 처리 후 원본 audio와 전체 transcript가 남지 않는다.
 
@@ -226,8 +237,8 @@
 
 완료 조건:
 
-- 두 iPhone 양방향 음성, TTS 즉시 중단, subject STT, fact evidence, purge, 통화 결과와 주간
-  리포트까지 하나의 시연에서 확인된다.
+- 두 iPhone 양방향 음성, TTS 즉시 중단, 양 참여자 STT/개별 fact evidence, purge, 각자 통화
+  결과와 주간 리포트까지 하나의 시연에서 확인된다.
 
 ## 3. 질문하지 않고 사용하는 실행 원칙
 
