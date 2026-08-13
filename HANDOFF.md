@@ -126,7 +126,8 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 �
 - **기침 detector는 현재 재현율이 사실상 0이다.** 합성 검증에서 +40 dB 폭발음도 탐지되지
   않았고, 점수 분해 결과 energy(가중 0.40)와 crest(0.15) 항이 구조적으로 죽어 있어 임계값
   0.65에 도달할 수 없다. `0.0 OK`로 저장되므로 "기침 없음"으로 오독될 위험이 있다.
-  근거와 수정 계획은 `backend/docs/calibration-todo.md` 1절에 있다.
+  근거는 `backend/docs/calibration-todo.md` 1절, HeAR Small/YAMNet 교체 판정과 검증 설계는
+  `backend/docs/voice-health-model-research.md`에 있다.
 - 음향/되묻기 상수를 측정으로 정할 calibration harness가 없다. 라벨 fixture와
   `scripts/calibrate_acoustics.py`가 필요하며 설계는 calibration-todo 2절에 있다.
 - `PAUSE_RATIO`는 segment 내부 간격만 세어 항상 0에 가깝다. 지표 정의 변경이라 팀 결정 필요.
@@ -234,6 +235,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/docs/two-iphone-e2e.md` | iPhone 2대 LAN/APNs/LiveKit/AI 전체 E2E 체크리스트와 장애 분리 |
 | `backend/docs/ai-transcript-design.md` | LLM 위치/prompt v2/eval과 되묻기 규칙 detector 설계 |
 | `backend/docs/acoustic-design.md` | 음향 4종 정의, 품질 gate, model, worker와 검증 기준 |
+| `backend/docs/voice-health-model-research.md` | HeAR/기침 detector 판정, 유사 서비스 비교, 되묻기·난청 한계와 검증 설계 |
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
@@ -388,6 +390,7 @@ Compose는 ignored `backend/private/`를 `/run/secrets/collog`에 read-only moun
 | `DEEPGRAM_API_KEY` | Deepgram Console 발급 | 필수 | Nova-3 한국어 STT |
 | `GEMINI_API_KEY` | Google AI Studio 발급 | 필수 | 구조화 LLM. OpenAI key와 동시에 필요하지 않음 |
 | `ELEVENLABS_API_KEY`/voice ID | ElevenLabs 발급·Voice Library 선택 | 서버 질문 음성 사용 시 필수 | 연결 대기 한국어 MP3. iOS에는 전달하지 않음 |
+| `HF_TOKEN` | Hugging Face 계정에서 HAI-DEF 약관 수락 후 발급 | HeAR detector artifact를 처음 받을 때만 필요 | gated model download. 앱/런타임 API key가 아니며 Git에 넣지 않음 |
 | `LIVEKIT_API_KEY/SECRET` | 우리가 직접 강한 난수로 생성 | 필수 | self-hosted room token, server API, Egress, webhook 서명 |
 | `JWT_SECRET` | 우리가 직접 강한 난수로 생성 | 필수 | 콜록 사용자 인증 JWT |
 | APNs `.p8`/Key ID/Team ID/Bundle ID | Apple Developer 발급·확인 | 실기기 백그라운드 수신 시 필수 | PushKit VoIP push |
@@ -403,6 +406,10 @@ Deepgram Aura TTS는 2026-08-11 공식 지원 언어에 한국어가 없어 사�
 `eleven_flash_v2_5`, `language_code=ko`, 기본 MP3 44.1 kHz/128 kbps를 사용한다. 생성물은 질문
 ID+voice/model/format/text hash로 cache하며 API key는 backend header에만 들어간다. ElevenLabs가
 실패하거나 설정되지 않으면 `ttsMode=IOS_LOCAL`로 질문별 폴백한다.
+
+HeAR model weight는 일반 Apache-2.0 artifact가 아니라 HAI-DEF 이용약관이 적용된다. 팀 책임자가
+약관을 수락하고 배포 조건을 검토하기 전에는 weight/TFLite 변환물을 public repository에
+commit하지 않는다. inference code는 Apache-2.0이지만 model weight의 배포 조건은 별도다.
 
 `JWT_SECRET`은 클라이언트용 값이 아니다. Swift/iOS·프론트엔드 팀원에게 전달하지 않는다.
 하나의 공용 백엔드만 사용하면 그 배포 환경에만 보관한다. 팀원이 각자 독립 로컬 백엔드를
@@ -494,8 +501,10 @@ production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용�
 
 ## 8. 다음 작업 우선순위
 
-1. 실제 cough 30개/hard-negative 30개로 `transient-heuristic-v1`을 검증한다. precision 0.85
-   미달이면 YAMNet/검증된 cough classifier로 교체한다.
+1. 현재 cough `0.0 OK` 노출을 `UNMEASURABLE(DETECTOR_UNVALIDATED)`로 바꾸고,
+   `backend/docs/voice-health-model-research.md`의 설계대로 HeAR `event_detector_small`과 YAMNet을
+   동일 in-domain label set에서 비교한다. full `google/hear-pytorch`는 512차원 embedding만
+   출력하는 약 1.21GB ViT-L이라 cough count 경로에 쓰지 않는다.
 2. 40-case Gemini eval을 `--start/--limit/--delay`로 quota-safe하게 완료하고 실패 fixture를
    prompt/schema에 반영한다.
 3. `backend/docs/two-iphone-e2e.md`의 고정 대화로 실제 iPhone 양단 통화를 하고
@@ -555,3 +564,6 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-13: 두 iPhone preflight CLI, Docker APNs `.p8` read-only mount와 개발용 LAN ATS 설명 추가.
 - 2026-08-13: 통화 화면에 ElevenLabs source badge와 player 상태/폴백/상대 연결 중단 로그를 추가해
   두 iPhone 현장에서 server TTS 성공 여부를 명시적으로 증빙하도록 보강.
+- 2026-08-13: HeAR 논문·PyTorch model card·공개 MobileNetV3 event detector와 Hyfe/ResAppDx/
+  Swaasa/Sonde/Winterlight/hearWHO를 조사. cough count는 HeAR Small/YAMNet bake-off로 결정하고,
+  되묻기는 난청 판정이 아닌 문맥적 대화 수리 관찰값으로 제한하기로 정리.

@@ -62,7 +62,10 @@ TTS 음원에 광대역 폭발음을 합성해 넣고 `_cough_candidates`를 직
    자음 파열음). 실제 건강정보가 아닌 수집 동의된 샘플만 쓴다.
 3. 아래 calibration harness로 파라미터를 sweep한다. 최소한 프레임 길이, hop, crest 정의,
    energy 기준선(median → 발화 제외 배경)을 후보에 넣는다.
-4. precision 0.85를 못 맞추면 heuristic을 버리고 검증된 classifier(YAMNet 등)로 교체한다.
+4. heuristic은 현재 validation 실패로 간주한다. HeAR `event_detector_small`을 주 후보,
+   YAMNet을 baseline으로 같은 in-domain label set에서 비교한다. full `google/hear-pytorch`는
+   embedding model이라 cough count 경로에 직접 쓰지 않는다. 상세 판정은
+   `voice-health-model-research.md`에 있다.
 
 ### 완료 기준
 

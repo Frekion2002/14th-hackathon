@@ -101,9 +101,16 @@ unit = semitone_mad
 이상 인접 patch를 750ms 기준으로 병합한다. 이는 파이프라인과 개인 기준선 데모를 위한 후보
 detector이며 cough로 임상 검증된 classifier가 아니다.
 
-현재 threshold 0.65는 deterministic transient fixture용 초기값이다. 실제 cough 30개와 hard
-negative 30개에서 precision 0.85를 만족하기 전에는 production threshold로 간주하지 않는다.
-그 평가가 완료되면 YAMNet/별도 cough classifier로 교체하고 detector version을 올린다.
+현재 threshold 0.65는 deterministic transient fixture용 초기값이며 실측에서 재현율이 사실상
+0으로 확인됐다. `0.0 OK`는 기침이 없었다는 뜻으로 오독되므로 교체 전에는
+`UNMEASURABLE(DETECTOR_UNVALIDATED)`로 다뤄야 한다.
+
+교체 1순위 후보는 Google HeAR repository의 별도 `event_detector_small`이다. 이 모델은 full
+`google/hear-pytorch`와 다르게 MobileNetV3 기반이며 16 kHz mono 2초 clip에서 Cough, Snore,
+Baby Cough, Breathe, Sneeze, Throat Clear, Laugh, Speech 확률을 출력한다. 2초 positive window의
+개수는 기침 event 수가 아니므로 인접 window 병합과 threshold calibration이 필요하다. YAMNet은
+동일 label set에서 비교할 공개 baseline으로 둔다. 근거와 서비스 비교는
+`voice-health-model-research.md`에 있다.
 
 YAMNet은 범용 AudioSet classifier이지 의료기기용 기침 진단 model이 아니다. 따라서 UI에는
 항상 “기침 후보 event” 또는 검수 후 “기침 event”로만 표시한다.
@@ -134,7 +141,8 @@ AcousticJob(callId, rawAudioUri, transcriptId, analyzerVersion)
 
 - decode: Python PCM WAV loader, resample: `librosa` + `soxr`
 - F0: `librosa.pyin`
-- cough: `transient-heuristic-v1`; validation 실패 시 YAMNet/검증된 ONNX classifier로 교체
+- cough: 현재 `transient-heuristic-v1`은 validation 실패. HeAR `event_detector_small`과 YAMNet
+  bake-off 후 선택 모델로 교체
 
 model artifact는 checksum과 license를 기록하고 container image에 pin한다. 외부 inference API로
 raw 건강 음성을 추가 전송하지 않는다.
@@ -158,9 +166,11 @@ raw 건강 음성을 추가 전송하지 않는다.
 ### cough validation
 
 실제 건강정보가 아닌 동의된 더미/공개 license 음원으로 cough 30개 이상, hard negative
-30개 이상(재채기·목 가다듬기·웃음·문 닫힘)을 label한다. threshold는 precision 우선으로
-선택하고 최소 목표를 precision 0.85, recall은 측정값과 함께 공개한다. 이 기준을 못 넘으면
-데모에서도 숫자를 확정값으로 표시하지 않는다.
+30개 이상(재채기·목 가다듬기·웃음·문 닫힘)을 label한다. 이는 pipeline smoke용이다. 모델
+선택용 in-domain bake-off는 5명 이상, cough bout 100개 이상, hard-negative 통화 1시간 이상을
+speaker 단위로 분리한다. threshold는 calibration split에서 precision 우선으로 선택하고 최소
+목표를 precision 0.85로 두되 recall과 FP/hour도 함께 공개한다. 이 기준을 못 넘으면 데모에서도
+숫자를 확정값으로 표시하지 않는다.
 
 ### 실기기 검증
 
@@ -182,7 +192,8 @@ raw PCM과 Egress 결과를 비교해 source 차이를 기록하되 raw PCM만 �
 4. 완료: pYIN F0 variation
 5. 완료: versioned transient cough 후보 detector와 deterministic fixture
 6. 완료: calendar-week median, MAD=0 `UNSCORABLE`, 결측 주 연속 판정 수정
-7. 남음: cough 30/hard-negative 30 validation과 iPhone fixture threshold freeze
+7. 남음: cough 결과를 `UNMEASURABLE`로 막고 HeAR Small/YAMNet calibration harness와
+   in-domain bake-off로 detector/threshold/merge gap freeze
 8. production 후속: 별도 Redis worker/queue와 model artifact checksum
 
 ## 참고
@@ -193,4 +204,8 @@ raw PCM과 Egress 결과를 비교해 source 차이를 기록하되 raw PCM만 �
 - [TensorFlow YAMNet tutorial](https://www.tensorflow.org/hub/tutorials/yamnet): 16 kHz mono 입력과
   AudioSet 521 class score
 - [Google AudioSet](https://research.google.com/audioset/): 범용 audio event ontology/dataset
+- [Google HeAR event detector demo](https://github.com/Google-Health/hear/blob/master/notebooks/hear_event_detector_demo.ipynb):
+  MobileNetV3 Small/Large, 8개 health event score, TFLite 변환 예제
+- [HeAR PyTorch model card](https://huggingface.co/google/hear-pytorch): 2초 음원을 512차원으로
+  바꾸는 ViT-L embedding model이며 cough detector 자체가 아님
 - [Deepgram Utterances](https://developers.deepgram.com/docs/utterances): utterance/word timing
