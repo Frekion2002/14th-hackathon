@@ -128,16 +128,18 @@ final class VoipPushHandler: NSObject, PKPushRegistryDelegate {
 ## 발신자 흐름
 
 1. `POST /v1/calls { "calleeId": parentId }`
-2. 응답의 `questions` 중 `ttsMode == IOS_LOCAL`인 문장을 `AVSpeechSynthesizer`의 `ko-KR`
-   음성으로 발신자에게만 재생한다. 이 음원은 통화 상대에게 송출하지 않는다.
+2. 첫 질문이 `ttsMode == REMOTE_ASSET`이면 `ttsAssetUrl`의 ElevenLabs MP3를 `AVPlayer`로,
+   `IOS_LOCAL`이면 `AVSpeechSynthesizer(ko-KR)`로 발신자에게만 재생한다. 이 음원은 통화
+   상대에게 송출하지 않는다.
 3. 응답의 `livekitUrl`, `accessToken`으로 room에 접속한다.
 4. 부모가 수락하면 부모도 같은 room에 접속한다.
 5. 종료 시 `POST /v1/calls/{callId}/end`를 호출한다.
 
-Deepgram Aura TTS API 자체는 존재하지만 2026-08-11 공식 지원 언어에 한국어가 없다. 따라서
-현재 `ttsAssetUrl`은 `null`, `ttsMode`는 `IOS_LOCAL`이며 STT에 쓰는 Deepgram key 외에 TTS용
-key는 추가하지 않는다. 추후 한국어 server TTS provider를 선택하면 서버가 미리 생성한 URL을
-`ttsAssetUrl`로 반환하고 `ttsMode=REMOTE_ASSET`으로 바꿀 수 있다.
+Deepgram Aura TTS API 자체는 존재하지만 2026-08-11 공식 지원 언어에 한국어가 없어 사용하지
+않는다. `QUESTION_TTS_PROVIDER=elevenlabs`와 API key/voice ID가 설정되면 서버가 질문 MP3를
+한 번 생성해 `tts/questions/`에 캐시하고, 만료되는 `ttsAssetUrl`과
+`ttsMode=REMOTE_ASSET`을 반환한다. key가 없거나 upstream/storage가 실패하면 질문별로
+`IOS_LOCAL`에 폴백하며 통화 생성은 계속된다. ElevenLabs key는 백엔드에만 둔다.
 
 ```swift
 import AVFoundation
@@ -145,10 +147,18 @@ import AVFoundation
 @MainActor
 final class RingingQuestionSpeaker {
     private let synthesizer = AVSpeechSynthesizer()
+    private var player: AVPlayer?
 
-    func speak(_ text: String) {
+    func speak(_ question: CollogAPI.Question) {
         stop()
-        let utterance = AVSpeechUtterance(string: text)
+        if question.ttsMode == "REMOTE_ASSET",
+           let value = question.ttsAssetUrl,
+           let url = URL(string: value) {
+            player = AVPlayer(url: url)
+            player?.play()
+            return
+        }
+        let utterance = AVSpeechUtterance(string: question.text)
         utterance.voice = AVSpeechSynthesisVoice(language: "ko-KR")
         utterance.rate = 0.48
         synthesizer.speak(utterance)
@@ -156,6 +166,8 @@ final class RingingQuestionSpeaker {
 
     // /accept에 해당하는 수신 상태 또는 LiveKit parent participant 연결 즉시 호출한다.
     func stop() {
+        player?.pause()
+        player = nil
         synthesizer.stopSpeaking(at: .immediate)
     }
 }

@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from app.config import Settings
 
@@ -27,6 +28,15 @@ class StorageGateway:
     async def create_upload_url(self, key: str, content_type: str) -> str:
         raise NotImplementedError
 
+    async def create_download_url(self, uri: str) -> str:
+        raise NotImplementedError
+
+    async def write(self, key: str, body: bytes, content_type: str | None = None) -> None:
+        raise NotImplementedError
+
+    async def exists(self, uri: str) -> bool:
+        raise NotImplementedError
+
     async def read(self, uri: str) -> bytes:
         raise NotImplementedError
 
@@ -40,6 +50,7 @@ class LocalStorage(StorageGateway):
         self.public_base_url = settings.public_base_url.rstrip("/")
         self.secret = settings.jwt_secret.encode()
         self.ttl = settings.upload_url_ttl_seconds
+        self.download_ttl = settings.tts_url_ttl_seconds
         self.root.mkdir(parents=True, exist_ok=True)
 
     def object_uri(self, key: str) -> str:
@@ -73,10 +84,32 @@ class LocalStorage(StorageGateway):
             return False
         return hmac.compare_digest(signature, self._signature(key, expires))
 
-    async def write(self, key: str, body: bytes) -> None:
+    def _download_signature(self, key: str, expires: int) -> str:
+        message = f"download:{key}:{expires}".encode()
+        return hmac.new(self.secret, message, hashlib.sha256).hexdigest()
+
+    async def create_download_url(self, uri: str) -> str:
+        key = self.object_key(uri)
+        expires = int(time.time()) + self.download_ttl
+        signature = self._download_signature(key, expires)
+        return (
+            f"{self.public_base_url}/v1/tts-assets/{quote(key, safe='/')}"
+            f"?expires={expires}&signature={signature}"
+        )
+
+    def verify_download(self, key: str, expires: int, signature: str) -> bool:
+        if expires < int(time.time()):
+            return False
+        return hmac.compare_digest(signature, self._download_signature(key, expires))
+
+    async def write(self, key: str, body: bytes, content_type: str | None = None) -> None:
+        del content_type
         path = self._path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(path.write_bytes, body)
+
+    async def exists(self, uri: str) -> bool:
+        return await asyncio.to_thread(self._path(uri).is_file)
 
     async def read(self, uri: str) -> bytes:
         path = self._path(uri)
@@ -94,6 +127,7 @@ class S3Storage(StorageGateway):
     def __init__(self, settings: Settings) -> None:
         self.bucket = settings.s3_bucket
         self.ttl = settings.upload_url_ttl_seconds
+        self.download_ttl = settings.tts_url_ttl_seconds
         if not self.bucket:
             raise StorageError("STORAGE_BACKEND=s3일 때 S3_BUCKET이 필요합니다")
         boto_config = Config(
@@ -135,6 +169,33 @@ class S3Storage(StorageGateway):
             Params={"Bucket": self.bucket, "Key": key, "ContentType": content_type},
             ExpiresIn=self.ttl,
         )
+
+    async def create_download_url(self, uri: str) -> str:
+        return await asyncio.to_thread(
+            self.presign_client.generate_presigned_url,
+            "get_object",
+            Params={"Bucket": self.bucket, "Key": self._key(uri)},
+            ExpiresIn=self.download_ttl,
+        )
+
+    async def write(self, key: str, body: bytes, content_type: str | None = None) -> None:
+        params: dict[str, object] = {"Bucket": self.bucket, "Key": key, "Body": body}
+        if content_type:
+            params["ContentType"] = content_type
+        await asyncio.to_thread(self.client.put_object, **params)
+
+    async def exists(self, uri: str) -> bool:
+        def head() -> bool:
+            try:
+                self.client.head_object(Bucket=self.bucket, Key=self._key(uri))
+                return True
+            except ClientError as exc:
+                code = str(exc.response.get("Error", {}).get("Code", ""))
+                if code in {"404", "NoSuchKey", "NotFound"}:
+                    return False
+                raise
+
+        return await asyncio.to_thread(head)
 
     async def read(self, uri: str) -> bytes:
         def download() -> bytes:

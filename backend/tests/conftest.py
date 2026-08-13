@@ -29,6 +29,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         # 돈다. 명시한 값이 .env보다 우선한다.
         storage_backend="local",
         allow_raw_only_analysis=False,
+        question_tts_provider="ios_local",
+        elevenlabs_api_key="",
+        elevenlabs_voice_id="",
     )
     app = create_app(settings)
     with TestClient(app) as test_client:

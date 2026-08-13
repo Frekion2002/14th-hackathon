@@ -68,7 +68,7 @@
 | 오디오 저장 | 로컬 또는 S3 호환 MinIO |
 | STT | Deepgram API, `nova-3`, `language=ko` |
 | LLM | Gemini API structured output, 기본 `gemini-3.6-flash` |
-| 연결 질문 TTS | Deepgram은 한국어 TTS 미지원. iOS `AVSpeechSynthesizer(ko-KR)` 로컬 재생 |
+| 연결 질문 TTS | backend ElevenLabs Flash v2.5 MP3 생성·캐시·서명 URL. 장애/미설정 시 iOS `AVSpeechSynthesizer(ko-KR)` 폴백 |
 | 음향 분석 | Deepgram word timing + `librosa.pyin` + versioned transient 후보 detector |
 | 배포 스택 | Docker Compose: backend/Postgres/Redis/MinIO/LiveKit/Egress |
 
@@ -111,11 +111,14 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 �
 - iOS PushKit용 APNs HTTP/2 provider와 `/devices` idempotent 등록
 - PushKit → CallKit → `/accept` → LiveKit iOS 계약 문서
 - `/team` 모바일 웹 포털과 `/team/status.json` 비밀값 없는 연동 상태 endpoint
-- 연결 대기 질문 `ttsMode=IOS_LOCAL` 계약과 Swift `AVSpeechSynthesizer(ko-KR)` 예제
+- 연결 대기 질문 ElevenLabs provider, MP3 cache, local/S3 만료 download URL과 iOS 로컬 폴백
+- ElevenLabs voice 목록/한국어 MP3 preview CLI. provider key는 backend에만 보관
 - APNs 자격증명 점검·실기기 발송 CLI와 sandbox 실기기 CallKit 수신 검증
 - iOS 앱 골격. PushKit 토큰 발급, VoIP push 수신, CallKit 수신 화면 표시까지 실기기 동작
 - iOS 개발 OTP 로그인, 기기 자동 등록, 가족 목록 발신, 발신·수신 공통 통화 화면
-- iOS LiveKit room 접속과 CallKit 세션 활성화 후 마이크 publish, 연결 대기 질문 `ko-KR` TTS
+- iOS LiveKit room 접속과 CallKit 세션 활성화 후 마이크 publish, remote MP3/iOS 질문 TTS
+- iPhone 2대 통화 자동 판정 CLI와 LAN/APNs/고정 대화/장애 분리 E2E 실행서
+- iOS 통화 화면의 ElevenLabs/iOS 폴백 badge, remote player 상태·즉시 중단 로그와 전체 로그 복사
 - Egress 없는 개발 환경의 부모 PCM-only 분석 mode와 회귀 test. 운영 기본값은 비활성
 
 ### 의도적으로 미완료
@@ -131,8 +134,8 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 �
 - 전체 40-case 실제 Gemini eval. provider가 처리한 7건은 7/7, 나머지 33건은 free-tier quota로
   요청 자체가 실패해 미평가다.
 - SMS OTP 실제 발송 provider. 개발 OTP는 `000000`이다.
-- server TTS asset은 없다. 한국어 질문은 의도적으로 iOS 로컬 TTS로 구현했으며 실기기에서
-  상대 수락 즉시 중단되는지 최종 검증이 남았다.
+- ElevenLabs 실제 key/voice ID를 `.env`에 넣어 한국어 음색을 선택하고, 실기기에서 remote MP3
+  재생과 상대 수락 즉시 중단을 확인해야 한다. 생성·storage 실패 시 local TTS 폴백은 test 완료다.
 - 실기기 양단 통화. 2026-08-13에 한 대(부모 역할)로 push→수락→LiveKit→PCM 업로드→분석까지
   검증했고 자녀 쪽은 API로 대신했다. iPhone 2대로 실제 음성이 오가는 통화는 아직이다.
 - 현재 발급한 `.p8`는 **sandbox 전용**이다. production endpoint는 `BadEnvironmentKeyInToken`
@@ -157,7 +160,7 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 �
    │                    ├─ create room/token ─────>│                    │
    │<─ token/questions ─┤                          │                    │
    │                    ├─ APNs VoIP push ─────────────────────────────>│
-   │ TTS 질문 로컬 재생 │                          │       PushKit→CallKit
+   │ ElevenLabs/로컬 TTS│                          │       PushKit→CallKit
    │ join/publish ────────────────────────────────>│                    │
    │                    │<──────── POST /accept ────────────────────────┤
    │                    ├─ parent token + 기존 child track 조회        │
@@ -204,7 +207,8 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 |---|---|
 | `services/livekit.py` | self-host LiveKit room/token/audio-track 조회/Track Egress/webhook adapter와 mock |
 | `services/notifications.py` | APNs ES256 provider JWT와 HTTP/2 VoIP push, mock/disabled adapter |
-| `services/storage.py` | 로컬/S3 저장, presigned upload/read/delete |
+| `services/storage.py` | 로컬/S3 저장, presigned upload/download, TTS write/cache/read/delete |
+| `services/tts.py` | ElevenLabs 한국어 질문 합성·cache key·만료 URL과 질문별 iOS 폴백 |
 | `services/deepgram.py` | Nova-3 STT와 utterance/word timing/segment 정규화 |
 | `services/gemini.py` | 부모-only fact/polarity/evidence output와 semantic validator |
 | `services/repeat_detector.py` | 설명 가능한 한국어 되묻기 규칙·제외·3초 event 병합 |
@@ -212,7 +216,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `services/pipeline.py` | 입력 대기→STT→LLM→음향→signal→purge orchestration |
 | `services/signals.py` | 주별 anchor/rolling 기준선, MAD 비교, 결측 주 연속 signal 계산 |
 | `services/reports.py` | 주간/월간 report와 되묻기 관찰 snapshot 생성 |
-| `services/questions.py` | 질환별 질문 pool, 선택, iOS local TTS mode |
+| `services/questions.py` | 질환별 질문 pool과 선택. TTS provider 적용 전 기본 local mode |
 | `services/domain.py` | 가족 접근, 동의, 초대 상태 공통 규칙 |
 | `services/http.py` | Deepgram/Gemini transient retry helper |
 
@@ -223,14 +227,19 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/docker-compose.yml` | 전체 self-hosted 개발 스택 |
 | `backend/deploy/livekit.yaml` | LiveKit/Redis/webhook/port 설정 |
 | `backend/deploy/egress.yaml` | Egress worker/MinIO 설정 |
-| `backend/Dockerfile` | API container image |
+| `backend/Dockerfile` | API와 실기기 preflight/검증 CLI가 포함된 container image |
 | `backend/.env.example` | 비밀값 없는 환경변수 template |
+| `backend/private/README.md` | ignored APNs `.p8`의 local Compose read-only mount 위치 안내 |
 | `backend/docs/ios-call-flow.md` | Swift PushKit/CallKit/LiveKit/PCM 구현 계약 |
+| `backend/docs/two-iphone-e2e.md` | iPhone 2대 LAN/APNs/LiveKit/AI 전체 E2E 체크리스트와 장애 분리 |
 | `backend/docs/ai-transcript-design.md` | LLM 위치/prompt v2/eval과 되묻기 규칙 detector 설계 |
 | `backend/docs/acoustic-design.md` | 음향 4종 정의, 품질 gate, model, worker와 검증 기준 |
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
+| `backend/scripts/check_elevenlabs.py` | ElevenLabs voice 목록 조회와 한국어 질문 MP3 preview CLI |
+| `backend/scripts/preflight_two_iphone.py` | LAN 주소/provider/APNs/MinIO의 통화 전 비밀값 없는 사전 판정 |
+| `backend/scripts/verify_two_iphone_call.py` | 최신/지정 통화의 양 Track Egress, 양 화자 STT, AI-2, purge 자동 판정 |
 | `backend/scripts/seed_demo_family.py` | 개발 OTP로 자녀-부모 초대·수락·동의·질환 프로필 생성 CLI |
 | `backend/scripts/replay_call.py` | Egress 없이 로컬 오디오로 STT/LLM/음향 파이프라인 실행 CLI |
 | `backend/scripts/acoustic_quality_report.py` | 음향 지표 측정 성공률과 실패 사유 분포 집계 CLI |
@@ -239,6 +248,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/tests/test_api_flow.py` | 온보딩부터 분석·폐기·리포트까지 E2E API test |
 | `backend/tests/test_providers.py` | Deepgram/Gemini/APNs provider unit test |
 | `backend/tests/test_ai_pipeline.py` | prompt/repeat/acoustic/calendar-week deterministic test |
+| `backend/tests/test_tts.py` | ElevenLabs 요청 계약, cache/서명 URL, 장애 local 폴백 test |
 | `backend/tests/conftest.py` | 격리 SQLite와 mock provider test app fixture |
 | `backend/pyproject.toml` | Python 의존성, ruff/pytest/build 설정 |
 | `backend/uv.lock` | 재현 가능한 dependency lock |
@@ -253,12 +263,12 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `ios/Collog/AnalysisPCMWriter.swift` | LiveKit local capture를 callback 수명 안에서 48 kHz mono int16 WAV로 기록 |
 | `ios/Collog/CollogAPI.swift` | OTP/기기/가족/통화 REST client와 서버 오류 message 파싱 |
 | `ios/Collog/AppSession.swift` | 로그인 세션·가족 구성원 상태. 토큰과 backend URL을 UserDefaults에 보관 |
-| `ios/Collog/RingingQuestionSpeaker.swift` | 연결 대기 질문의 `ko-KR` 로컬 TTS 재생/즉시 중단 |
-| `ios/Collog/ContentView.swift` | 로그인 분기, 홈(가족 목록·발신 버튼), 개발용 토큰 확인 섹션 |
+| `ios/Collog/RingingQuestionSpeaker.swift` | ElevenLabs remote MP3 상태 관찰·실패 local 폴백·즉시 중단 로그 |
+| `ios/Collog/ContentView.swift` | 로그인 분기, 홈, 개발용 토큰과 복사 가능한 실기기 이벤트 로그 |
 | `ios/Collog/LoginView.swift` | 개발 OTP 로그인과 backend base URL 입력 |
-| `ios/Collog/CallView.swift` | 발신·수신 공통 통화 화면. 오늘의 질문과 종료 버튼 |
+| `ios/Collog/CallView.swift` | 발신·수신 통화 화면. 오늘의 질문, ElevenLabs/폴백 badge, 종료 버튼 |
 | `ios/Collog/Collog.entitlements` | `aps-environment` push entitlement |
-| `ios/Collog/Info.plist` | `UIBackgroundModes` = `voip`, `audio`와 마이크 사용 설명 |
+| `ios/Collog/Info.plist` | `voip`/`audio`, 마이크·LAN 설명과 개발용 local-network ATS 허용 |
 
 발신도 CallKit `CXStartCallAction`을 거친다. 그래야 `didActivate`에서 오디오 세션을 받는
 경로가 발신·수신 모두 같아진다. LiveKit `isAutomaticConfigurationEnabled`는 꺼져 있고
@@ -294,7 +304,7 @@ docker compose config --quiet
 2026-08-13 `feat/ios-pushkit` 통합 검증 결과:
 
 - `uv run ruff check .`: 통과
-- `uv run pytest -q`: 44 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
+- `uv run pytest -q`: 47 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
 - `uv build`: wheel/sdist 생성 성공
 - `docker compose config --quiet`: 통과. analyzer v3/품질 gate/raw-only 환경변수 전달 확인
 - Swift 전체 source `swiftc -frontend -parse`: 문법 검사 통과
@@ -320,6 +330,14 @@ docker compose config --quiet
   `ANALYZED` → 원본 3개 asset purge까지 성공
 - `/team` Docker HTML 렌더와 `/team/status.json`을 localhost 및 LAN 주소에서 확인. 실제 key는
   노출하지 않고 provider별 configured boolean만 반환
+- ElevenLabs 실제 `sk_` key/선택 voice로 `eleven_flash_v2_5`, `language_code=ko` MP3 생성
+  성공. Docker 질문 API가 `ttsMode=REMOTE_ASSET`과 MinIO 서명 URL을 반환하고 해당 URL에서
+  `200 audio/mpeg`(51,035 bytes) 수신 확인
+- `scripts.preflight_two_iphone`을 Docker 이미지에서 실행 확인. 이 workstation의 현재 `.env`는
+  Deepgram/Gemini/JWT/LiveKit/MinIO/ElevenLabs가 통과하며, iPhone용 LAN URL 3개와 APNs
+  Team/Key/Bundle ID·`.p8`는 아직 미설정이다. 이를 채우기 전 잠금화면 양단 테스트는 불가하다.
+- ElevenLabs key ID 오입력의 `400 invalid_api_key`를 확인해 provider/Team Hub/preflight가
+  `sk_` 실제 key 형식을 구분하도록 보강
 
 현재 이 Mac에는 Homebrew `docker-compose 5.4.0`, `docker-buildx 0.36.1`,
 `livekit-cli 2.18.2`가 설치되어 있고 `~/.docker/config.json`의 `cliPluginsExtraDirs`가
@@ -344,7 +362,12 @@ Swagger는 `http://localhost:8080/docs`, health는 `GET /v1/health`다.
 환경에서는 `TEAM_PORTAL_ENABLED=false`로 끄거나 인증/TLS 앞단을 둔다.
 
 전체 스택은 `.env`에 Deepgram/Gemini 키와 iPhone에서 접근 가능한 LAN 주소를 넣은 뒤
-`docker compose up --build`로 시작한다. APNs는 선택 사항이며 `.p8`를 절대 커밋하지 않는다.
+`docker compose up --build`로 시작한다. ElevenLabs 질문 음성을 쓰면 key와 voice ID도 넣는다.
+APNs는 선택 사항이며 `.p8`를 절대 커밋하지 않는다.
+
+Compose는 ignored `backend/private/`를 `/run/secrets/collog`에 read-only mount한다. APNs key는
+`backend/private/AuthKey_*.p8`에 두고 `.env`에는 컨테이너 내부 경로인
+`APNS_PRIVATE_KEY_PATH=/run/secrets/collog/AuthKey_*.p8`를 설정한다.
 
 ## 7. 보안·데이터 불변조건
 
@@ -364,19 +387,22 @@ Swagger는 `http://localhost:8080/docs`, health는 `GET /v1/health`다.
 |---|---|---|---|
 | `DEEPGRAM_API_KEY` | Deepgram Console 발급 | 필수 | Nova-3 한국어 STT |
 | `GEMINI_API_KEY` | Google AI Studio 발급 | 필수 | 구조화 LLM. OpenAI key와 동시에 필요하지 않음 |
+| `ELEVENLABS_API_KEY`/voice ID | ElevenLabs 발급·Voice Library 선택 | 서버 질문 음성 사용 시 필수 | 연결 대기 한국어 MP3. iOS에는 전달하지 않음 |
 | `LIVEKIT_API_KEY/SECRET` | 우리가 직접 강한 난수로 생성 | 필수 | self-hosted room token, server API, Egress, webhook 서명 |
 | `JWT_SECRET` | 우리가 직접 강한 난수로 생성 | 필수 | 콜록 사용자 인증 JWT |
 | APNs `.p8`/Key ID/Team ID/Bundle ID | Apple Developer 발급·확인 | 실기기 백그라운드 수신 시 필수 | PushKit VoIP push |
 | MinIO access key/secret | 우리가 직접 생성 | Egress 녹음 시 필수 | self-hosted S3 호환 오디오 저장 |
 
 최소 foreground 데모에서 외부 업체로부터 받을 것은 Deepgram key와 Gemini key 두 개다.
+ElevenLabs 음색을 쓰면 ElevenLabs key와 voice ID가 추가된다.
 LiveKit key/secret은 LiveKit Cloud에서 받지 않는다. 실제 iOS PushKit 수신까지 시연하면 Apple
 APNs 자격증명이 추가된다. Gemini 무료 tier에는 제품 개선 데이터 사용 조건이 있으므로 실제
 건강정보가 아닌 더미 데이터만 사용한다.
 
-Deepgram에는 Aura TTS API가 있지만 2026-08-11 공식 지원 언어에 한국어가 없다. 따라서 기존
-Deepgram key로 콜록 질문의 한국어 TTS를 만들 수 없고 추가 Deepgram TTS key도 받지 않는다.
-현재 iOS 내장 `ko-KR` voice를 사용한다.
+Deepgram Aura TTS는 2026-08-11 공식 지원 언어에 한국어가 없어 사용하지 않는다. ElevenLabs
+`eleven_flash_v2_5`, `language_code=ko`, 기본 MP3 44.1 kHz/128 kbps를 사용한다. 생성물은 질문
+ID+voice/model/format/text hash로 cache하며 API key는 backend header에만 들어간다. ElevenLabs가
+실패하거나 설정되지 않으면 `ttsMode=IOS_LOCAL`로 질문별 폴백한다.
 
 `JWT_SECRET`은 클라이언트용 값이 아니다. Swift/iOS·프론트엔드 팀원에게 전달하지 않는다.
 하나의 공용 백엔드만 사용하면 그 배포 환경에만 보관한다. 팀원이 각자 독립 로컬 백엔드를
@@ -398,8 +424,8 @@ Deepgram key로 콜록 질문의 한국어 TTS를 만들 수 없고 추가 Deepg
 
 LAN 데모에서 팀에 공개해도 되는 값은 `PUBLIC_BASE_URL`, `LIVEKIT_URL`,
 `S3_PUBLIC_ENDPOINT_URL` 같은 접속 주소다. 다만 iOS 앱은 실제로 공용 Backend base URL만
-고정하면 되고, LiveKit URL과 토큰 및 PCM presigned URL은 Backend 응답으로 받는다. TTS는
-iOS 로컬 `AVSpeechSynthesizer`이므로 별도 TTS key가 없다.
+고정하면 되고, LiveKit URL과 토큰, PCM/TTS 만료 URL은 Backend 응답으로 받는다. ElevenLabs
+API key와 voice ID는 backend `.env`에만 둔다.
 
 #### pull 후 팀원 PC에서 전체 스택을 실행하는 최소 `.env`
 
@@ -413,6 +439,11 @@ JWT_SECRET=<팀 공용 값 또는 각자 생성한 32자 이상 값>
 MOCK_EXTERNAL_SERVICES=false
 GEMINI_MODEL=gemini-3.6-flash
 DEEPGRAM_MODEL=nova-3
+
+# ElevenLabs server voice를 쓸 때만 추가. 미설정이면 iOS ko-KR local voice
+QUESTION_TTS_PROVIDER=elevenlabs
+ELEVENLABS_API_KEY=<팀 개발용 실제 값>
+ELEVENLABS_VOICE_ID=<선택한 voice id>
 
 # Mac 자체에서만 호출하면 localhost, 실제 iPhone이면 각 팀원 Mac의 LAN IP로 변경
 PUBLIC_BASE_URL=http://<HOST>:8080
@@ -467,9 +498,9 @@ production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용�
    미달이면 YAMNet/검증된 cough classifier로 교체한다.
 2. 40-case Gemini eval을 `--start/--limit/--delay`로 quota-safe하게 완료하고 실패 fixture를
    prompt/schema에 반영한다.
-3. 실제 iPhone 양단 통화로 Track Egress, 오디오 라우팅, 연결 질문 TTS 즉시 중단과 네트워크
-   전환까지 E2E 검증한다. APNs는
-   sandbox 실기기 CallKit 수신까지 2026-08-13에 검증했다.
+3. `backend/docs/two-iphone-e2e.md`의 고정 대화로 실제 iPhone 양단 통화를 하고
+   `scripts.verify_two_iphone_call`의 모든 check를 통과시킨다. APNs sandbox CallKit 수신은
+   한 대에서 검증됐고 양방향 음성, remote TTS 즉시 중단, 두 Egress는 아직이다.
 4. 통화 시작 직후 PCM 유실 여부를 대본과 전사로 확인하고, 재현되면 writer 부착 시점을
    앞당기거나 짧은 pre-publish buffer를 둔다.
 5. iOS 초대·동의·질환 프로필 화면을 구현하고 개발 seed script 의존을 없앤다.
@@ -518,3 +549,9 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-13: 기침 detector 재현율 0을 합성 검증으로 확인하고 보정 계획을 calibration-todo.md에 정리.
 - 2026-08-13: `feat/ios-pushkit` 4개 커밋을 main에 통합하고 PCM buffer 수명, 통화 화면 상태,
   Docker analyzer 설정, raw-only replay 회귀와 iOS 17 deployment target을 보완.
+- 2026-08-13: ElevenLabs 한국어 질문 TTS를 backend 생성·cache·만료 URL로 추가하고 iOS local
+  폴백을 유지. voice/preview CLI와 provider 장애 test 추가.
+- 2026-08-13: iPhone 2대 통화 절차와 DB 기반 Egress→양 화자 STT→AI-2→purge 자동 판정 CLI 추가.
+- 2026-08-13: 두 iPhone preflight CLI, Docker APNs `.p8` read-only mount와 개발용 LAN ATS 설명 추가.
+- 2026-08-13: 통화 화면에 ElevenLabs source badge와 player 상태/폴백/상대 연결 중단 로그를 추가해
+  두 iPhone 현장에서 server TTS 성공 여부를 명시적으로 증빙하도록 보강.

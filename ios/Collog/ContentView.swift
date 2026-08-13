@@ -117,8 +117,17 @@ private struct DeveloperSection: View {
             TokenRow(title: "VoIP 토큰", token: callCenter.voipToken)
             TokenRow(title: "APNs 토큰", token: callCenter.apnsToken)
             DisclosureGroup("이벤트 로그") {
+                if !callCenter.events.isEmpty {
+                    Button("전체 로그 복사") {
+                        UIPasteboard.general.string = callCenter.events.reversed().joined(separator: "\n")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
                 ForEach(Array(callCenter.events.enumerated()), id: \.offset) { _, event in
-                    Text(event).font(.caption)
+                    Text(event)
+                        .font(.caption)
+                        .textSelection(.enabled)
                 }
             }
         }

@@ -293,8 +293,12 @@ final class VoipCallCenter: NSObject, ObservableObject {
     // 초기 데모에서는 첫 질문만 읽고 나머지는 화면의 참고 질문으로 둔다. 재생 실패가
     // 통화 연결을 막아서는 안 된다.
     private func speakFirstQuestion(_ questions: [CollogAPI.Question]) {
-        guard let first = questions.first(where: { $0.usesLocalTTS }) else { return }
-        speaker.speak(first.text)
+        guard let first = questions.first else { return }
+        let contract = first.usesRemoteTTS ? "ElevenLabs REMOTE_ASSET" : "iOS LOCAL fallback"
+        log("질문 음성 계약: \(contract)")
+        speaker.speak(first) { [weak self] message in
+            self?.log(message)
+        }
     }
 }
 
@@ -414,6 +418,7 @@ extension VoipCallCenter: CXProviderDelegate {
             Task {
                 do {
                     let created = try await CollogAPI.createCall(calleeId: pending.calleeId)
+                    log("발신 통화 생성: \(created.callId)")
                     activeCall = ActiveCall(
                         id: created.callId,
                         uuid: pending.uuid,
@@ -530,7 +535,7 @@ extension VoipCallCenter: RoomDelegate {
         Task { @MainActor in
             guard let call = activeCall else { return }
             // 상대가 room에 들어왔다. 질문 낭독을 문장 중간이어도 즉시 멈춘다.
-            speaker.stop()
+            speaker.stop(reason: "상대 연결로 질문 음성 즉시 중단")
             activeCall?.phase = .active
             if call.direction == .outgoing {
                 provider.reportOutgoingCall(with: call.uuid, connectedAt: nil)

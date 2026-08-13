@@ -12,8 +12,8 @@ FEATURES = [
     ("되묻기 감지", "완료", "한국어 규칙·제외 규칙·3초 병합·통화/리포트 집계"),
     ("AI-2 · 음향", "Prototype", "word timing·pYIN·기침 후보 transient 실제 계산"),
     ("백엔드", "Prototype", "인증·동의·통화·분석·리포트 API와 원본 폐기"),
-    ("iOS/APNs", "대기", "Swift 앱과 Apple sandbox 실기기 E2E 필요"),
-    ("연결 질문 TTS", "계약 완료", "Deepgram 한국어 미지원 → iOS ko-KR 로컬 TTS"),
+    ("iOS/APNs", "Prototype", "Swift 앱·APNs sandbox 구현, iPhone 2대 E2E 필요"),
+    ("연결 질문 TTS", "Prototype", "ElevenLabs MP3 캐시·서명 URL, iOS 로컬 폴백"),
 ]
 
 
@@ -26,6 +26,10 @@ def build_team_status(settings: Settings) -> dict[str, Any]:
         and settings.apns_bundle_id
         and settings.apns_private_key_path
     )
+    elevenlabs_ready = bool(
+        settings.elevenlabs_api_key.startswith("sk_") and settings.elevenlabs_voice_id
+    )
+    elevenlabs_selected = settings.question_tts_provider == "elevenlabs"
     return {
         "service": "Collog backend",
         "status": "ok",
@@ -46,9 +50,12 @@ def build_team_status(settings: Settings) -> dict[str, Any]:
             "livekit": {"configured": livekit_ready, "mode": "self-hosted"},
             "apnsVoip": {"configured": apns_ready, "enabled": settings.apns_voip_enabled},
             "questionTts": {
-                "configured": True,
-                "mode": "ios-local",
+                "configured": not elevenlabs_selected or elevenlabs_ready,
+                "provider": "elevenlabs" if elevenlabs_selected else "ios-local",
+                "mode": "remote-asset" if elevenlabs_selected and elevenlabs_ready else "ios-local",
                 "language": "ko-KR",
+                "model": settings.elevenlabs_model if elevenlabs_selected else None,
+                "fallback": "ios-local",
                 "deepgramKoreanSupported": False,
             },
             "storage": {"backend": settings.storage_backend},
@@ -120,9 +127,13 @@ def render_team_portal(settings: Settings) -> str:
             ),
             (
                 "질문 TTS",
-                "iOS AVSpeechSynthesizer · ko-KR",
-                "로컬 사용",
-                "ready",
+                (
+                    f"ElevenLabs {providers['questionTts']['model']} · iOS 폴백"
+                    if providers["questionTts"]["provider"] == "elevenlabs"
+                    else "iOS AVSpeechSynthesizer · ko-KR"
+                ),
+                readiness(providers["questionTts"]["configured"]),
+                "ready" if providers["questionTts"]["configured"] else "waiting",
             ),
         )
     )

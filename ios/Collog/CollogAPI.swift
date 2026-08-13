@@ -47,6 +47,7 @@ enum CollogAPI {
 
         var id: String { questionId }
         var usesLocalTTS: Bool { ttsMode == "IOS_LOCAL" }
+        var usesRemoteTTS: Bool { ttsMode == "REMOTE_ASSET" && ttsAssetUrl != nil }
     }
 
     struct AudioConstraints: Decodable {

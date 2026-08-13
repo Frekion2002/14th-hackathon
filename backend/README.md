@@ -71,6 +71,7 @@ S3_PUBLIC_ENDPOINT_URL=http://192.168.0.10:9000
 
 ```bash
 docker compose up --build
+docker compose exec backend python -m scripts.preflight_two_iphone
 ```
 
 | 서비스 | 주소 |
@@ -171,8 +172,9 @@ APNS_BUNDLE_ID=com.example.Collog
 APNS_PRIVATE_KEY_PATH=/absolute/or/container/path/AuthKey_XXXX.p8
 ```
 
-`.p8` 파일은 저장소와 이미지에 넣지 않는다. Docker로 실행할 때에는 별도 secret/bind mount로
-컨테이너에 읽기 전용 마운트하고 `APNS_PRIVATE_KEY_PATH`를 컨테이너 내부 경로로 지정한다.
+`.p8` 파일은 저장소와 이미지에 넣지 않는다. Compose는 ignored `backend/private/`를
+`/run/secrets/collog`에 읽기 전용 mount한다. 파일을 `backend/private/AuthKey_*.p8`에 두고
+`APNS_PRIVATE_KEY_PATH`에는 컨테이너 내부의 `/run/secrets/collog/AuthKey_*.p8`를 지정한다.
 APNs가 꺼져 있거나 부모 기기에 `voipToken`이 없으면 foreground-only 데모 통화는 계속
 동작한다.
 
@@ -197,9 +199,28 @@ Xcode 직접 설치 빌드의 토큰은 `sandbox`, TestFlight/App Store 빌드�
 Gemini는 말하지 않은 원인을 추론하지 않으며 질환명, 위험군 라벨, 응급도, 치료 지시를
 생성하지 않도록 시스템 지시와 응답 스키마로 제한한다.
 
-연결 대기 질문은 Deepgram TTS가 아니라 iOS `AVSpeechSynthesizer(ko-KR)`로 발신자에게만
-재생한다. Deepgram Aura TTS는 현재 한국어를 지원하지 않으며, API는 각 질문에
-`ttsMode=IOS_LOCAL`을 반환한다.
+연결 대기 질문은 선택적으로 ElevenLabs에서 한국어 MP3를 생성해 스토리지에 캐시하고,
+백엔드가 발급한 만료 URL로 발신자에게만 재생한다. API key는 iOS에 전달하지 않는다.
+ElevenLabs가 꺼져 있거나 생성/스토리지 요청이 실패하면 API는 해당 질문에
+`ttsMode=IOS_LOCAL`을 반환하고 앱의 `AVSpeechSynthesizer(ko-KR)`로 폴백한다. 따라서 TTS
+장애는 통화 생성을 막지 않는다.
+
+```dotenv
+QUESTION_TTS_PROVIDER=elevenlabs
+ELEVENLABS_API_KEY=...
+ELEVENLABS_VOICE_ID=...
+ELEVENLABS_MODEL=eleven_flash_v2_5
+```
+
+voice 목록 조회와 실제 한국어 MP3 생성 점검:
+
+```bash
+uv run python -m scripts.check_elevenlabs
+uv run python -m scripts.check_elevenlabs --preview
+```
+
+Deepgram Aura TTS는 현재 한국어를 지원하지 않으므로 STT용 Deepgram key를 질문 음성에
+재사용하지 않는다.
 
 > Gemini 무료 티어는 해커톤의 더미 데이터에만 사용한다. 무료 티어 입력은 Google 제품
 > 개선에 사용될 수 있으므로 실제 건강정보를 처리하는 운영 환경에서는 데이터 비학습 조건의
@@ -211,6 +232,14 @@ Gemini는 말하지 않은 원인을 추론하지 않으며 질환명, 위험군
 uv run ruff check .
 uv run pytest -q
 docker compose config --quiet
+```
+
+iPhone 2대 실기기 검증 절차와 자동 판정기는
+[`docs/two-iphone-e2e.md`](docs/two-iphone-e2e.md)에 있다.
+
+```bash
+# 통화 종료 후 최신 통화를 3분 동안 추적해 Egress→STT→AI-2→폐기를 판정한다.
+uv run python -m scripts.verify_two_iphone_call
 ```
 
 LLM eval은 건강정보가 아닌 고정 더미 fixture만 사용한다.

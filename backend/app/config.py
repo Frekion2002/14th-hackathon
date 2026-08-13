@@ -54,9 +54,17 @@ class Settings(BaseSettings):
     gemini_base_url: str = "https://generativelanguage.googleapis.com"
     gemini_max_output_tokens: int = 2048
 
+    question_tts_provider: Literal["ios_local", "elevenlabs"] = "ios_local"
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = ""
+    elevenlabs_model: str = "eleven_flash_v2_5"
+    elevenlabs_output_format: str = "mp3_44100_128"
+    elevenlabs_base_url: str = "https://api.elevenlabs.io"
+
     storage_backend: Literal["local", "s3"] = "local"
     local_storage_path: Path = Path(".data/audio")
     upload_url_ttl_seconds: int = 900
+    tts_url_ttl_seconds: int = 3_600
     s3_endpoint_url: str | None = None
     s3_public_endpoint_url: str | None = None
     s3_region: str = "ap-northeast-2"

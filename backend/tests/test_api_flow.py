@@ -361,8 +361,11 @@ def test_team_portal_is_mobile_ready_and_never_exposes_secrets(client: TestClien
     assert payload["providers"]["livekit"]["mode"] == "self-hosted"
     assert payload["providers"]["questionTts"] == {
         "configured": True,
+        "provider": "ios-local",
         "mode": "ios-local",
         "language": "ko-KR",
+        "model": None,
+        "fallback": "ios-local",
         "deepgramKoreanSupported": False,
     }
     assert "apiKey" not in status.text

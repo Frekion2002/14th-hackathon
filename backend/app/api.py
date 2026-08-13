@@ -136,7 +136,9 @@ async def questions_for_parent(request: Request, session: SessionDep, parent_id:
     profile = await session.get(ParentProfile, parent_id)
     conditions = profile.conditions if profile else []
     excluded = await recent_question_exclusions(session, parent_id)
-    return daily_questions(settings_from(request), conditions, excluded, parent_id)
+    source, questions = daily_questions(settings_from(request), conditions, excluded, parent_id)
+    questions = await request.app.state.container.question_tts.attach_audio(questions)
+    return source, questions
 
 
 async def deliver_incoming_call_push(
@@ -775,6 +777,31 @@ async def local_upload(
     body = await request.body()
     await storage.write(encoded_key, body)
     return Response(status_code=204)
+
+
+@router.get("/tts-assets/{encoded_key:path}", include_in_schema=False)
+async def local_tts_asset(
+    encoded_key: str,
+    request: Request,
+    expires: int,
+    signature: str,
+) -> Response:
+    storage = request.app.state.container.storage
+    key = encoded_key.lstrip("/")
+    if not isinstance(storage, LocalStorage) or not key.startswith("tts/questions/"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "TTS 오디오를 찾을 수 없습니다")
+    if not storage.verify_download(key, expires, signature):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "TTS URL이 만료되었거나 잘못되었습니다")
+    try:
+        body = await storage.read(storage.object_uri(key))
+    except Exception as exc:
+        logger.warning("local TTS asset read failed: %s", exc)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "TTS 오디오를 찾을 수 없습니다") from exc
+    return Response(
+        content=body,
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.post("/calls/{callId}/raw-audio/complete", status_code=202, tags=["Call"])

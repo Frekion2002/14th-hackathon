@@ -35,8 +35,19 @@ struct CallView: View {
 
             if !call.questions.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("오늘의 질문")
-                        .font(.headline)
+                    HStack {
+                        Text("오늘의 질문")
+                            .font(.headline)
+                        Spacer()
+                        if let first = call.questions.first {
+                            Label(
+                                first.usesRemoteTTS ? "ElevenLabs 음성" : "iOS 폴백 음성",
+                                systemImage: first.usesRemoteTTS ? "waveform.badge.mic" : "iphone"
+                            )
+                            .font(.caption.bold())
+                            .foregroundStyle(first.usesRemoteTTS ? .green : .orange)
+                        }
+                    }
                     ForEach(call.questions) { question in
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: "quote.opening")

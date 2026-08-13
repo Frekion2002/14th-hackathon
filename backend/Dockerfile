@@ -10,6 +10,7 @@ COPY --from=uv /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY app ./app
+COPY scripts ./scripts
 RUN uv sync --locked --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8080

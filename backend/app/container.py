@@ -11,6 +11,7 @@ from app.services.pipeline import ProcessingPipeline
 from app.services.reports import ReportService
 from app.services.signals import SignalService
 from app.services.storage import create_storage
+from app.services.tts import create_question_tts_gateway
 
 
 class AppContainer:
@@ -18,6 +19,7 @@ class AppContainer:
         self.settings = settings
         self.database = Database(settings.database_url)
         self.storage = create_storage(settings)
+        self.question_tts = create_question_tts_gateway(settings, self.storage)
         self.livekit = create_livekit_gateway(settings)
         self.voip_push = create_voip_push_gateway(settings)
         self.stt = create_stt_gateway(settings)

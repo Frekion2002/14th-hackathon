@@ -1,4 +1,6 @@
 .env
+private
+*.p8
 .venv
 .data
 .pytest_cache
