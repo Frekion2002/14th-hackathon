@@ -123,10 +123,23 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 �
 
 ### 의도적으로 미완료
 
-- **기침 detector는 현재 재현율이 사실상 0이다.** 합성 검증에서 +40 dB 폭발음도 탐지되지
-  않았고, 점수 분해 결과 energy(가중 0.40)와 crest(0.15) 항이 구조적으로 죽어 있어 임계값
-  0.65에 도달할 수 없다. `0.0 OK`로 저장되므로 "기침 없음"으로 오독될 위험이 있다.
-  근거와 수정 계획은 `backend/docs/calibration-todo.md` 1절에 있다.
+- **`COUGH_EVENTS`는 `UNMEASURABLE(DETECTOR_NOT_VALIDATED)`로 고정했다 (v4).**
+  `transient-heuristic-v1`이 공개 도메인 라벨 음원에서도 실패했다. 기침 4개 전부 0회,
+  8개 파일 최고 점수 0.609로 임계값 0.65에 미달한다. 임계값을 0.40으로 낮추면 웃음이 7회로
+  모든 기침 파일보다 높게 잡히므로 상수 튜닝으로는 해결되지 않는다. `0.0 OK`가 기준선에
+  쌓이는 것을 막는 것이 이번 변경의 목적이며, **지표를 살리는 작업은 아직 남아 있다.**
+  항별 실측 분해는 `backend/docs/calibration-todo.md` 1절에 있다.
+- **기침 detector를 HeAR event detector로 교체했다 (v5). 다만 여전히 꺼져 있다.**
+  `google/hear`의 `event_detector_small`(MobileNet-V3, 8 class) ONNX 변환본이며 라벨 음원
+  8개에서 기침 4/4 검출, hard negative 오탐 0/4다. clip당 약 3 ms, `onnxruntime` 71 MB,
+  모델 5 MB로 TensorFlow 없이 돈다. 2초 window가 개별 기침을 분리하지 못해 **단위가 `회`에서
+  `구간`으로 바뀌었다.** 켜려면 `cough_detector_validated=true`가 필요하고, 그 전에 기침 30 /
+  hard negative 30을 **실제 통화 조건**(부모 발화 + Opus codec + 노년층 화자)에서 측정해야
+  한다. 현재 근거는 깨끗한 단일 음원 8개뿐이라 precision을 주장할 수 없다.
+- **모델 가중치는 저장소에 없다.** HAI-DEF 약관 대상이라 `backend/models/`를 `.gitignore`에
+  넣었다. 각자 `HF_TOKEN=... uv run --with tensorflow --with tf2onnx python
+  scripts/fetch_cough_model.py`로 한 번 받는다. 없으면 `MODEL_UNAVAILABLE`, sha256 불일치면
+  `MODEL_CHECKSUM_MISMATCH`로 떨어지고 숫자는 만들지 않는다.
 - 음향/되묻기 상수를 측정으로 정할 calibration harness가 없다. 라벨 fixture와
   `scripts/calibrate_acoustics.py`가 필요하며 설계는 calibration-todo 2절에 있다.
 - `PAUSE_RATIO`는 segment 내부 간격만 세어 항상 0에 가깝다. 지표 정의 변경이라 팀 결정 필요.
@@ -555,3 +568,12 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-13: 두 iPhone preflight CLI, Docker APNs `.p8` read-only mount와 개발용 LAN ATS 설명 추가.
 - 2026-08-13: 통화 화면에 ElevenLabs source badge와 player 상태/폴백/상대 연결 중단 로그를 추가해
   두 iPhone 현장에서 server TTS 성공 여부를 명시적으로 증빙하도록 보강.
+- 2026-08-13: 공개 도메인 라벨 음원 8개로 `transient-heuristic-v1` 실패를 재현. 기침 4개 전부
+  0회, 최고 점수 0.609로 임계값 0.65 미달이며 0.40으로 낮추면 웃음이 7회로 1위다. 항별 분해
+  결과 죽은 항은 energy 하나이고(clip 자신의 median을 기준선으로 삼는 자기참조 구조),
+  crest는 통화 조건에서만 붕괴한다는 점을 calibration-todo.md 1절에 정정 기록.
+- 2026-08-13: `COUGH_EVENTS`를 `UNMEASURABLE(DETECTOR_NOT_VALIDATED)`로 고정하고 기침 detector를
+  HeAR event detector ONNX 변환본으로 교체 (analyzer v5). 단위가 `회`에서 `구간`으로 바뀌었고
+  `onnxruntime`만 추가해 TensorFlow 없이 돈다. 모델은 HAI-DEF 약관 대상이라 저장소에 넣지 않고
+  `scripts/fetch_cough_model.py`로 revision 고정·sha256 검증·NOTICE 생성을 거쳐 각자 받는다.
+  `cough_detector_validated` 기본값은 `False`이므로 사용자에게 보이는 동작은 아직 변화 없다.

@@ -96,17 +96,79 @@ unit = semitone_mad
 
 ### 4-4. 기침 후보 event `COUGH_EVENTS`
 
-현재 `transient-heuristic-v1`은 16 kHz mono waveform을 0.96초 patch/0.48초 hop으로 나눠
-상대 에너지 상승, 1 kHz 이상 power 비율, zero-crossing rate, crest factor를 조합한다. threshold
-이상 인접 patch를 750ms 기준으로 병합한다. 이는 파이프라인과 개인 기준선 데모를 위한 후보
-detector이며 cough로 임상 검증된 classifier가 아니다.
+**현재 상태: `UNMEASURABLE(DETECTOR_NOT_VALIDATED)` 고정.** `Settings.cough_detector_validated`
+기본값이 `False`이며, `analyze`가 계산 경로와 무관하게 기침 결과를 덮어쓴다.
 
-현재 threshold 0.65는 deterministic transient fixture용 초기값이다. 실제 cough 30개와 hard
-negative 30개에서 precision 0.85를 만족하기 전에는 production threshold로 간주하지 않는다.
-그 평가가 완료되면 YAMNet/별도 cough classifier로 교체하고 detector version을 올린다.
+`transient-heuristic-v1`은 16 kHz mono waveform을 0.96초 patch/0.48초 hop으로 나눠 상대 에너지
+상승, 1 kHz 이상 power 비율, zero-crossing rate, crest factor를 가중합하고 threshold 이상 인접
+patch를 750ms 기준으로 병합한다. 2026-08-13 공개 도메인 라벨 음원(기침 4, hard negative 4)으로
+측정한 결과 이 detector는 사용할 수 없다.
 
-YAMNet은 범용 AudioSet classifier이지 의료기기용 기침 진단 model이 아니다. 따라서 UI에는
-항상 “기침 후보 event” 또는 검수 후 “기침 event”로만 표시한다.
+| 항 | 가중치 | 실측 결과 |
+|---|---:|---|
+| energy | 0.40 | 기준선을 클립 자신의 median으로 잡아 5개 중 4개에서 0.00. 기침이 잦을수록 median이 올라가 스스로를 가린다 |
+| crest | 0.15 | 단독 녹음(crest 9~18)에서는 동작하지만 발화가 프레임을 채우는 통화 조건에서 붕괴 |
+| high | 0.25 | 동작하지만 웃음에 만점(1.00)을 준다. `Man_coughing`은 0.00 |
+| zcr | 0.20 | 동작하지만 웃음에 만점(1.00)을 준다 |
+
+energy가 죽어 8개 파일 최고 점수가 0.609로 threshold 0.65에 닿지 못했다. threshold를 0.40으로
+낮추면 웃음이 7회로 모든 기침 파일보다 높게 잡힌다. 네 축 어디에도 기침과 웃음을 가르는 정보가
+없어 상수 튜닝으로는 해결되지 않는다.
+
+#### 교체 detector: `hear-event-detector-small-v1`
+
+기본 detector는 HeAR health acoustic event detector(`google/hear`의 `event_detector_small`)의
+ONNX 변환본으로 바꿨다. MobileNet-V3 backbone이며 2초/16 kHz mono clip마다 8 class 확률을 낸다.
+
+```text
+['Cough', 'Snore', 'Baby Cough', 'Breathe', 'Sneeze', 'Throat Clear', 'Laugh', 'Speech']
+```
+
+`Throat Clear`, `Laugh`, `Sneeze`가 별도 class라 hard negative를 무엇으로 오인했는지 구분할 수
+있다. 같은 라벨 음원 8개 기준 결과다.
+
+| 파일 | 정답 | `Cough` 최고 | 최고 class | 검출 구간 |
+|---|---|---:|---|---:|
+| Man_coughing | 기침 | 0.9998 | Cough | 1 |
+| Cough_1 | 기침 | 1.0000 | Cough | 3 |
+| Cough_2 | 기침 | 1.0000 | Cough | 3 |
+| Woman_coughing_three_times | 기침 | 0.9993 | Cough | 1 |
+| Sneezing | 재채기 | 0.0264 | Sneeze | 0 |
+| Laughter_and_clearing_voice | 웃음+헛기침 | 0.3992 | Laugh | 0 |
+| Laughter | 웃음 | 0.6880 | Laugh | 0 |
+| Knocking_on_wood_or_door | 문 두드림 | 0.0008 | — | 0 |
+
+threshold 0.9에서 기침 4/4 검출, hard negative 오탐 0/4다. clip당 약 3 ms로 60초 통화가
+0.5초 hop 기준 0.4초면 끝난다. TensorFlow 없이 `onnxruntime`(71 MB)만 쓴다.
+
+**단위가 `회`에서 `구간`으로 바뀌었다.** 2초 window는 "기침이 있는가"에는 답하지만 "몇 회인가"
+에는 답하지 못한다. 기침 한 번이 앞뒤 window를 모두 양성으로 만들기 때문이다. 그래서 세는 값은
+기침 횟수가 아니라 연속 검출 구간의 수이며 `cough_unit()`이 detector에 따라 단위를 정한다.
+기준선은 같은 analyzer version끼리만 비교하므로 단위가 섞이지 않는다.
+
+**여전히 `UNMEASURABLE`이다.** `cough_detector_validated` 기본값은 `False`다. 위 8개는 깨끗한
+단일 음원이라 통화 조건의 precision을 대표하지 않는다. §7의 cough 30 / hard negative 30을
+통과하기 전에는 값을 내보내지 않는다.
+
+#### 모델 획득과 라이선스
+
+가중치는 HAI-DEF 약관 대상이라 **저장소에 커밋하지 않는다.** `backend/models/`는 `.gitignore`
+대상이며 각자 한 번 받는다.
+
+```bash
+HF_TOKEN=hf_... uv run --with tensorflow --with tf2onnx python scripts/fetch_cough_model.py
+```
+
+스크립트는 HF revision을 고정해 내려받고, tf2onnx로 opset 17 변환한 뒤 무음 입력으로 동작을
+확인하고, `NOTICE`와 provenance JSON(revision, sha256, 도구 버전)을 남긴다. 런타임은
+`cough_model_sha256`으로 파일을 검증하며 불일치 시 `MODEL_CHECKSUM_MISMATCH`, 파일이 없으면
+`MODEL_UNAVAILABLE`로 떨어진다. 어느 경우에도 숫자를 만들지 않는다.
+
+약관상 재배포 시 HAI-DEF 고지, 변경 사실 표기, 사용 제한 승계가 필요하다. 공개 저장소에
+변환본을 올리지 않는 이유다.
+
+UI에는 항상 “기침 후보 event” 또는 검수 후 “기침 event”로만 표시한다. 어떤 classifier도
+의료기기용 기침 진단 model이 아니다.
 
 ## 5. 기준선과 robust Z
 
@@ -182,8 +244,18 @@ raw PCM과 Egress 결과를 비교해 source 차이를 기록하되 raw PCM만 �
 4. 완료: pYIN F0 variation
 5. 완료: versioned transient cough 후보 detector와 deterministic fixture
 6. 완료: calendar-week median, MAD=0 `UNSCORABLE`, 결측 주 연속 판정 수정
-7. 남음: cough 30/hard-negative 30 validation과 iPhone fixture threshold freeze
-8. production 후속: 별도 Redis worker/queue와 model artifact checksum
+7. 완료: `transient-heuristic-v1` 실패 확인과 `COUGH_EVENTS` `UNMEASURABLE` 고정 (v4)
+8. 완료: HeAR event detector 도입 — `onnxruntime` 의존성, `fetch_cough_model.py` 획득 경로,
+   sha256 검증, HAI-DEF NOTICE, 단위 `회` → `구간` (v5)
+9. 남음: cough 30/hard-negative 30 validation과 threshold freeze. 통과해야
+   `cough_detector_validated`를 켠다
+10. 남음: calibration harness(`scripts/calibrate_acoustics.py`)와 라벨 fixture
+11. 남음: 실제 통화 조건(부모 발화 + Opus codec + 노년층 화자) 재측정. 현재 근거는 깨끗한
+    단일 음원 8개뿐이다
+12. 남음: 컨테이너 배포 시 모델 주입 경로. `Dockerfile`은 `app`과 `scripts`만 복사하므로
+    이미지에 모델이 없다. `cough_detector_validated`를 켜기 전에 volume mount 또는 build
+    secret으로 `HF_TOKEN`을 받아 빌드 중 획득하는 방식을 정한다
+13. production 후속: 별도 Redis worker/queue
 
 ## 참고
 

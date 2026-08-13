@@ -80,8 +80,30 @@ class Settings(BaseSettings):
     baseline_window_weeks: int = 4
     robust_z_threshold: float = 1.5
     promoted_consecutive_weeks: int = 4
-    acoustic_analyzer_version: str = "collog-acoustic-v3"
+    acoustic_analyzer_version: str = "collog-acoustic-v5"
     cough_score_threshold: float = 0.65
+
+    # transient-heuristic-v1은 라벨 음원에서 재현율이 사실상 0이다. 공개 도메인 기침 녹음
+    # 4개에서 최고 점수가 0.609로 임계값 0.65에 닿지 못했고, 임계값을 0.40으로 낮추면 웃음이
+    # 7회로 모든 기침 파일보다 높게 잡힌다. 라벨 세트에서 precision을 제시하기 전까지
+    # COUGH_EVENTS를 UNMEASURABLE로 고정한다. `0.0 OK`가 저장되면 "기침이 없었다"로 읽히고
+    # 기준선에 0만 쌓여 MAD가 0이 되므로, 이후 실제 기침을 이상치로 만들지 못한다.
+    cough_detector_validated: bool = False
+
+    # HeAR event detector. 가중치는 HAI-DEF 약관 대상이라 저장소에 없다.
+    # `scripts/fetch_cough_model.py`로 받으며, 파일이 없으면 MODEL_UNAVAILABLE로 떨어진다.
+    cough_detector: Literal["transient-heuristic-v1", "hear-event-detector-small-v1"] = (
+        "hear-event-detector-small-v1"
+    )
+    cough_model_path: Path = Path("models/hear-event-detector-small.onnx")
+    cough_model_sha256: str = "636caf6c4c6ff036e10ea2c745928d9ab546f9227837c7b1986250d5025736fb"
+    # Google 데모 기본값. 라벨 음원 8개에서 기침 최소 0.999, hard negative 최대 0.688로
+    # 양쪽에 여유가 있으나 통화 조건에서 재측정하기 전까지 검증된 동작점이 아니다.
+    cough_detection_threshold: float = 0.9
+    # 2초 window를 얼마나 촘촘히 밀지. 짧을수록 구간 경계가 정확해지고 비용이 늘어난다.
+    cough_window_hop_seconds: float = 0.5
+    # 이보다 짧게 끊긴 검출은 같은 구간으로 본다.
+    cough_merge_gap_seconds: float = 0.75
 
     # 아래 값은 실측으로 보정되지 않은 잠정 상수다. 코드에 숨어 있으면 틀렸다는 사실조차
     # 드러나지 않으므로 설정으로 노출한다. 값을 바꿀 때에는 저장된 값과 구분되도록
