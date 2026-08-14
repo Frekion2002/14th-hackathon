@@ -357,7 +357,7 @@ docker compose config --quiet
 2026-08-14 `feat/schema-guard` 검증 결과:
 
 - `uv run ruff check .`: 통과
-- `uv run pytest -q`: 60 tests 통과 (기존 47 + schema guard 13). warning은 기존 FastAPI
+- `uv run pytest -q`: 61 tests 통과 (기존 47 + schema guard 14). warning은 기존 FastAPI
   TestClient deprecation 1개로 변동 없음
 - `uv build`: wheel/sdist 생성 성공
 - `docker compose config --quiet`: 통과. `SCHEMA_AUTO_RESET` 전달 확인

@@ -374,18 +374,21 @@ upgrade head`가 데이터를 유지한 채 반영한다.
 3. 테이블 하나를 통째로 drop → `ADDITIVE`, 그 테이블만 재생성되고 **다른 테이블 데이터는
    보존됨**
 4. 기존 테이블에서 컬럼 하나를 drop → `DRIFTED`, `auto_reset=True`면 전체 재생성
-5. `auto_reset=False` + `ADDITIVE` → `RuntimeError`, **DB가 수정되지 않음**
-6. `auto_reset=False` + `DRIFTED` → `RuntimeError`, DB는 그대로 유지됨
-7. 리셋 시 `Base.metadata`에 없는 스테일 테이블도 사라짐 (reflect 기반 drop 검증)
-8. 모델에 없는 여분 컬럼·테이블이 DB에 있어도 판정이 나지 않는다 (오탐 방지)
+5. `auto_reset=False` + `FRESH` → `RuntimeError`, **테이블이 하나도 만들어지지 않음**
+6. `auto_reset=False` + `ADDITIVE` → `RuntimeError`, **DB가 수정되지 않음**
+7. `auto_reset=False` + `DRIFTED` → `RuntimeError`, DB는 그대로 유지됨
+8. 리셋 시 `Base.metadata`에 없는 스테일 테이블도 사라짐 (reflect 기반 drop 검증)
+9. 모델에 없는 여분 컬럼·테이블이 DB에 있어도 판정이 나지 않는다 (오탐 방지)
 
 3번과 4번이 `ADDITIVE`/`DRIFTED` 분리를 검증한다. 하나의 전체 해시로 구현하면 3번이
 실패한다.
 
-5번이 소유권 규칙을 검증한다. 서버에서 guard가 편의로 테이블을 만들면 Alembic head와
-어긋나므로, `auto_reset=False`에서는 안전해 보이는 추가조차 수행하지 않아야 한다.
+5번과 6번이 소유권 규칙을 검증한다. 서버에서 guard가 편의로 테이블을 만들면 Alembic head와
+어긋나므로, `auto_reset=False`에서는 안전해 보이는 생성조차 수행하지 않아야 한다. 특히 5번은
+**2026-08-18에 migration을 돌리지 않고 앱만 올린 경우**다. `빈 DB는 만들어 줘도 안전하다`는
+판단으로 `FRESH`를 예외 처리하면 이 test가 `DID NOT RAISE`로 실패한다.
 
-7번은 `Base.metadata.drop_all`로 구현하면 실패한다.
+8번은 `Base.metadata.drop_all`로 구현하면 실패한다.
 
 ### 8-1. Postgres에서 같은 테스트 돌리기
 
@@ -419,7 +422,7 @@ docker exec collog-guard-pg psql -U collog -d collog -c "DROP TABLE users;"
 ```bash
 cd backend
 uv run ruff check .
-uv run pytest -q          # 기존 47개 + 신규 8개
+uv run pytest -q          # 기존 47개 + 신규 14개
 uv build
 docker compose config --quiet
 ```

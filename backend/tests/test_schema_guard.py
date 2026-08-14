@@ -188,3 +188,14 @@ async def test_drift_is_refused_without_touching_the_database(engine: AsyncEngin
         await ensure_schema(engine, auto_reset=False)
 
     assert await user_ids(engine) == {"keep-me"}
+
+
+async def test_empty_database_is_refused_when_auto_reset_is_off(engine: AsyncEngine) -> None:
+    """migration을 돌리지 않고 앱만 배포한 경우다.
+
+    guard가 대신 만들어 주면 Alembic head와 실제 스키마가 어긋나므로 거부해야 한다.
+    """
+    with pytest.raises(RuntimeError, match="alembic upgrade head"):
+        await ensure_schema(engine, auto_reset=False)
+
+    assert await table_names(engine) == set()
