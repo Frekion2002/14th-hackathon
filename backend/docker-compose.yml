@@ -90,6 +90,7 @@ services:
     environment:
       APP_ENV: development
       DATABASE_URL: postgresql+asyncpg://collog:collog-local-only@postgres:5432/collog
+      SCHEMA_AUTO_RESET: ${SCHEMA_AUTO_RESET:-true}
       JWT_SECRET: ${JWT_SECRET:-collog-local-jwt-secret-change-before-production}
       MOCK_EXTERNAL_SERVICES: "false"
       TEAM_PORTAL_ENABLED: ${TEAM_PORTAL_ENABLED:-true}

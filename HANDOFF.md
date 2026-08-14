@@ -1,6 +1,6 @@
 # 콜록(Collog) 개발 HANDOFF
 
-마지막 갱신: 2026-08-13 (Asia/Seoul)
+마지막 갱신: 2026-08-14 (Asia/Seoul)
 
 이 문서는 콜록 개발의 단일 인수인계 기준이다. 구현, 계약, 검증 결과, 미완료 항목이 바뀌면
 코드와 같은 커밋에서 반드시 이 문서를 갱신한다. 비밀키와 실제 건강정보는 기록하지 않는다.
@@ -227,6 +227,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/app/container.py` | DB/storage/LiveKit/STT/LLM/APNs/pipeline 의존성 조립 |
 | `backend/app/team_portal.py` | 모바일/WebView 팀 포털 HTML과 비밀값 없는 provider 상태 snapshot |
 | `backend/app/database.py` | async engine/session/Base |
+| `backend/app/schema_guard.py` | 기동 시 모델과 DB 스키마 비교. 로컬은 재생성, 배포는 기동 거부 |
 | `backend/app/models.py` | 사용자, 가족, 동의, 통화, 오디오, 추출, 기준선, signal, report DB 모델 |
 | `backend/app/schemas.py` | camelCase API request/response와 Gemini 추출 schema |
 | `backend/app/security.py` | OTP hash, JWT 발급/인증, role 검사 |
@@ -267,6 +268,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/docs/voice-health-model-research.md` | HeAR/기침 detector 판정, 유사 서비스 비교, 되묻기·난청 한계와 검증 설계 |
 | `backend/docs/profile-question-report-design.md` | 피그마 기준 건강 프로필→질문→통화 자기보고→주·월간 리포트 계약과 현재 코드 차이 |
 | `backend/docs/implementation-plan-v2.md` | 승인된 권장 기본값, Phase 0~7 구현 순서·완료 조건, 실제 질문이 필요한 외부 조건 |
+| `backend/docs/schema-management-design.md` | 로컬 schema guard와 배포 Alembic의 두 축, 판정 규칙, 가비아 서버 배포 제약 |
 | `backend/docs/service-proposal-outline.md` | 초기 서비스 기획안을 개조식으로 재구성하고 현재 제품·구현·검증 상태에 맞춰 정정한 문서 |
 | `output/pdf/collog-service-proposal-outline.pdf` | 팀 공유·검토용 개조식 서비스 기획안 PDF 산출물 |
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
@@ -284,6 +286,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/tests/test_providers.py` | Deepgram/Gemini/APNs provider unit test |
 | `backend/tests/test_ai_pipeline.py` | prompt/repeat/acoustic/calendar-week deterministic test |
 | `backend/tests/test_tts.py` | ElevenLabs 요청 계약, cache/서명 URL, 장애 local 폴백 test |
+| `backend/tests/test_schema_guard.py` | 스키마 판정, ADDITIVE 데이터 보존, DRIFTED 재생성, 배포 기동 거부 test |
 | `backend/tests/conftest.py` | 격리 SQLite와 mock provider test app fixture |
 | `backend/pyproject.toml` | Python 의존성, ruff/pytest/build 설정 |
 | `backend/uv.lock` | 재현 가능한 dependency lock |
@@ -350,6 +353,17 @@ docker compose config --quiet
   `xcodebuild`를 재실행하지 못했다. 브랜치 작성자는 같은 소스를 Xcode/실기기에서 빌드해
   APNs sandbox CallKit 수신과 부모 PCM 분석을 확인했다고 기록했다.
 - generated OpenAPI: 27 paths / 28 operations
+
+2026-08-14 `feat/schema-guard` 검증 결과:
+
+- `uv run ruff check .`: 통과
+- `uv run pytest -q`: 60 tests 통과 (기존 47 + schema guard 13). warning은 기존 FastAPI
+  TestClient deprecation 1개로 변동 없음
+- `uv build`: wheel/sdist 생성 성공
+- `docker compose config --quiet`: 통과. `SCHEMA_AUTO_RESET` 전달 확인
+- 미완료: compose Postgres에서의 `ADDITIVE`/`DRIFTED` 실측. SQLite는 외래키를 강제하지 않아
+  reflect 기반 drop의 삭제 순서를 검증하지 못한다. 절차는
+  `backend/docs/schema-management-design.md` 4-5절
 - `docker-compose.yml`, `deploy/livekit.yaml`, `deploy/egress.yaml`: YAML parse 통과
 - Docker Compose 5.4.0 + Colima arm64에서 Postgres/Redis/MinIO/LiveKit/Egress/backend 전체
   stack을 새 librosa/numpy image로 재빌드·기동하고 health/container import 확인
@@ -409,7 +423,10 @@ Compose는 ignored `backend/private/`를 `/run/secrets/collog`에 read-only moun
 ## 7. 보안·데이터 불변조건
 
 - 최신 부모 동의가 `GRANTED`가 아니면 Egress와 PCM 업로드를 시작하지 않는다.
-- 동의 이력은 overwrite하지 않고 append-only로 쌓는다.
+- 동의 이력은 overwrite하지 않고 append-only로 쌓는다. 애플리케이션은 어떤 경우에도
+  동의 record를 수정하지 않는다. 단 `SCHEMA_AUTO_RESET=true`인 **로컬 개발 DB**는 스키마가
+  어긋날 때 통째로 재생성되므로 이력이 유지되지 않는다. 대상은 더미 데이터이며, 배포
+  환경은 `SCHEMA_AUTO_RESET=false`로 이 경로가 차단된다.
 - 부모 발화 20초 미만은 LLM/음향 변화 분석에서 제외한다.
 - 원본 오디오는 분석 성공 여부와 관계없이 폐기한다.
 - 저장 가능한 것은 구조화 텍스트, 파생 특징값, 리포트다.
@@ -538,7 +555,11 @@ production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용�
 
 구현 순서와 phase별 완료 조건은 `backend/docs/implementation-plan-v2.md`를 따른다.
 
-1. Phase 0: 미검증 cough 노출 차단, subject 계약 fixture, migration 기반 준비
+1. Phase 0: 미검증 cough 노출 차단, subject 계약 fixture, migration 기반 준비.
+   schema guard는 2026-08-14 완료. 남은 것은 Alembic 도입(`alembic.ini`, `migrations/env.py`,
+   baseline, Dockerfile COPY)과 compose Postgres 실측이며 설계는
+   `backend/docs/schema-management-design.md` 4~5절에 있다. 2026-08-18 가비아 서버가
+   `SCHEMA_AUTO_RESET=false`로 뜨므로 그 전에 끝나야 한다.
 2. Phase 1: 관계 기반 가족/subject와 질환·복용약·걱정 프로필/동의 철회
 3. Phase 2: `CallParticipant` 기반 양 참여자 분석·양방향 통화와 기존 iOS adapter
 4. Phase 3: anchor+dynamic 질문 정책과 ElevenLabs
@@ -612,3 +633,8 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-13: Egress worker가 없는 raw-only 개발 구성에서 `/accept`가 Track Egress 응답을
   기다리며 통화 연결과 DB transaction을 지연시키던 문제를 수정. raw-only일 때 Egress 조회·시작을
   모두 생략하고, 일반 Compose의 양쪽 Track Egress 경로는 유지.
+- 2026-08-14: 기동 시 모델과 DB 스키마를 비교하는 schema guard 추가. `create_all()`이 기존
+  테이블을 ALTER하지 않아 스키마 변경이 조용히 무시되던 문제를 막는다. 신규 테이블만 늘어난
+  경우(`ADDITIVE`)는 데이터를 지우지 않고 그 테이블만 만들고, 기존 테이블이 어긋나면
+  (`DRIFTED`) 로컬은 재생성한다. `SCHEMA_AUTO_RESET=false`인 배포 환경에서는 스키마를 전혀
+  수정하지 않고 기동을 거부한다. 설계는 `backend/docs/schema-management-design.md`.
