@@ -163,6 +163,12 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 �
 - 되묻기 탐지 재현율 미측정. `repeat-ko-v2`에서 `어` 부분 일치 오탐은 고쳤다.
 - 전체 40-case 실제 Gemini eval. provider가 처리한 7건은 7/7, 나머지 33건은 free-tier quota로
   요청 자체가 실패해 미평가다.
+- **시연용 과거 4주 더미 데이터 seed가 없다.** `scripts/seed_demo_family.py`는 초대·가족
+  구성원·동의·프로필까지만 만들고 통화·기준선·리포트를 하나도 만들지 않는다. 기준선은 같은
+  time slot의 유효 통화가 4개 calendar week에 걸쳐 최소 주 1회 쌓여야 비교 문장을 만들므로,
+  서버를 새로 띄우고 실제 통화를 몇 번 해도 리포트는 `기준선 수집 중`만 나온다. 주간 리포트
+  시연이 성립하려면 과거 4주 더미 seed가 필요하다. 계획서 82행과 235행이 요구하는 항목이며
+  더미임을 UI에서 명확히 표시해야 한다.
 - SMS OTP 실제 발송 provider. 개발 OTP는 `000000`이다.
 - ElevenLabs 실제 key/voice ID를 `.env`에 넣어 한국어 음색을 선택하고, 실기기에서 remote MP3
   재생과 상대 수락 즉시 중단을 확인해야 한다. 생성·storage 실패 시 local TTS 폴백은 test 완료다.
@@ -572,6 +578,21 @@ production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용�
 7. Phase 6: 실제 label/기기 검증을 통과한 음향값만 보조 연결
 8. Phase 7: 피그마 iOS 흐름과 두 iPhone 전체 E2E
 
+### 2026-08-18 가비아 서버 전에 끝나야 하는 것
+
+가비아 클라우드 지원은 **2026-08-18(화) ~ 08-28(금) 10일**이며 2 vCore / 4 GB / 공인 IP
+1개다. 서버가 생기는 순간부터 실기기 통화 기록이 보존 대상이 되므로 아래는 그 전에 끝나야
+한다. 사양·메모리 산정·배포 제약은 `backend/docs/schema-management-design.md` 5절에 있다.
+
+| 항목 | 상태 | 근거 |
+|---|---|---|
+| schema guard | 완료 (2026-08-14) | 서버는 `SCHEMA_AUTO_RESET=false`로 뜬다 |
+| Alembic 도입 | 미착수 | 서버 스키마 소유자. 없으면 스키마 변경 때 DB를 지워야 한다 |
+| Phase 1 | 미착수 | ALTER가 몰린 유일한 구간 |
+| Phase 2의 양쪽 기기 PCM upload | 미착수 | 4 GB에 Egress를 못 올린다. `ALLOW_RAW_ONLY_ANALYSIS=true`로 운영해야 하는데 현재 raw-only는 부모 PCM만 다뤄 양 참여자 분석이 안 된다 |
+| 과거 4주 더미 seed | 미착수 | 없으면 주간 리포트가 `기준선 수집 중`만 표시된다 |
+| 도메인·TLS 방식 | **미결정** | 공인 IP만으로는 Let's Encrypt 발급이 안 된다. 무료 도메인+LE / ATS 예외 확대 / 자체 서명 중 선택이 필요하다 |
+
 기침은 보조 지표이므로 Phase 6의 모델 검증이 실패해도 값을 숨기면 핵심 demo를 막지 않는다.
 외부 자격증명이나 법무 승인처럼 코드로 결정할 수 없는 조건만 해당 phase에서 사용자에게 묻는다.
 
@@ -642,3 +663,9 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   경우(`ADDITIVE`)는 데이터를 지우지 않고 그 테이블만 만들고, 기존 테이블이 어긋나면
   (`DRIFTED`) 로컬은 재생성한다. `SCHEMA_AUTO_RESET=false`인 배포 환경에서는 스키마를 전혀
   수정하지 않고 기동을 거부한다. 설계는 `backend/docs/schema-management-design.md`.
+- 2026-08-14: 가비아 클라우드 지원 기간(08-18~08-28)과 사양(2 vCore / 4 GB / 공인 IP 1개)을
+  기준으로 배포 제약을 정리. 4 GB에는 `shm_size: 1gb`를 요구하는 LiveKit Egress를 올릴 수
+  없어 `ALLOW_RAW_ONLY_ANALYSIS=true` 운영이 전제이며, 그러려면 Phase 2의 양쪽 기기 PCM
+  upload가 먼저 필요하다. 공인 IP만으로는 Let's Encrypt 발급이 불가능해 도메인·TLS 방식
+  결정이 남았다. `scripts/seed_demo_family.py`가 통화·기준선·리포트를 만들지 않아 과거 4주
+  더미 seed가 없다는 점도 함께 확인했다.
