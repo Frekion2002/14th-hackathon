@@ -361,9 +361,13 @@ docker compose config --quiet
   TestClient deprecation 1개로 변동 없음
 - `uv build`: wheel/sdist 생성 성공
 - `docker compose config --quiet`: 통과. `SCHEMA_AUTO_RESET` 전달 확인
-- 미완료: compose Postgres에서의 `ADDITIVE`/`DRIFTED` 실측. SQLite는 외래키를 강제하지 않아
-  reflect 기반 drop의 삭제 순서를 검증하지 못한다. 절차는
-  `backend/docs/schema-management-design.md` 4-5절
+- Postgres 17 실측 통과: 같은 13개 test를 `GUARD_TEST_DATABASE_URL`로 `postgres:17-alpine`에
+  대해 실행해 전부 통과. 외래키 제약 20개가 걸린 상태에서 `DROP TABLE users`는
+  `cannot drop table users because other objects depend on it`으로 거부되지만 reflect 기반
+  정렬 drop은 성공하므로, SQLite가 검증하지 못하는 삭제 순서가 실제로 확인됐다. `MATCHED`
+  재실행 무동작과 `SCHEMA_AUTO_RESET=false` 정상 통과도 같은 DB에서 확인. 절차는
+  `backend/docs/schema-management-design.md` 8-1절
+- 미완료: Alembic 도입과 4-5절 배포 리허설
 - `docker-compose.yml`, `deploy/livekit.yaml`, `deploy/egress.yaml`: YAML parse 통과
 - Docker Compose 5.4.0 + Colima arm64에서 Postgres/Redis/MinIO/LiveKit/Egress/backend 전체
   stack을 새 librosa/numpy image로 재빌드·기동하고 health/container import 확인

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -10,9 +11,26 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from app.schema_guard import SchemaVerdict, compare, ensure_schema
 
 
+def _drop_every_table(connection: sa.Connection) -> None:
+    """fixture 전용 정리.
+
+    `schema_guard`의 내부 함수를 재사용하지 않는다. 검증 대상이 정리까지 맡으면 그 함수가
+    틀렸을 때 테스트도 같이 틀려서 실패가 드러나지 않는다.
+    """
+    reflected = sa.MetaData()
+    reflected.reflect(connection)
+    reflected.drop_all(connection)
+
+
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    created = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'guard.db'}")
+    # 기본은 테스트마다 새로 만드는 SQLite다. GUARD_TEST_DATABASE_URL을 주면 같은 검사를
+    # Postgres에서 돌린다. SQLite는 외래키를 강제하지 않아 reflect 기반 drop의 삭제 순서를
+    # 검증하지 못하므로, 배포 대상 dialect에서 한 번은 확인해야 한다.
+    default_url = f"sqlite+aiosqlite:///{tmp_path / 'guard.db'}"
+    created = create_async_engine(os.environ.get("GUARD_TEST_DATABASE_URL") or default_url)
+    async with created.begin() as connection:
+        await connection.run_sync(_drop_every_table)
     try:
         yield created
     finally:

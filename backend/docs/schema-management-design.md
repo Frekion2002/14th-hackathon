@@ -387,6 +387,33 @@ upgrade head`가 데이터를 유지한 채 반영한다.
 
 7번은 `Base.metadata.drop_all`로 구현하면 실패한다.
 
+### 8-1. Postgres에서 같은 테스트 돌리기
+
+SQLite는 외래키를 기본적으로 강제하지 않아 reflect 기반 drop의 삭제 순서를 검증하지 못한다.
+`GUARD_TEST_DATABASE_URL`을 주면 같은 13개 테스트가 Postgres에서 돈다.
+
+```bash
+docker run -d --rm --name collog-guard-pg \
+  -e POSTGRES_DB=collog -e POSTGRES_USER=collog -e POSTGRES_PASSWORD=guard-test-only \
+  -p 55432:5432 postgres:17-alpine
+
+GUARD_TEST_DATABASE_URL="postgresql+asyncpg://collog:guard-test-only@127.0.0.1:55432/collog" \
+  uv run pytest tests/test_schema_guard.py -q
+
+docker stop collog-guard-pg
+```
+
+compose가 아니라 독립 컨테이너를 쓴다. 팀원의 `postgres-data` 볼륨을 건드리지 않기 위해서다.
+이미지는 compose와 같은 `postgres:17-alpine`이다.
+
+**이 검사에 실제로 힘이 있는지 확인하는 법.** 테이블을 만든 뒤 순진하게 지워 보면 Postgres가
+거부한다. 같은 DB에서 `_drop_everything()`이 성공한다면 정렬이 실제로 일을 한 것이다.
+
+```bash
+docker exec collog-guard-pg psql -U collog -d collog -c "DROP TABLE users;"
+# ERROR: cannot drop table users because other objects depend on it
+```
+
 ## 9. 완료 조건
 
 ```bash
@@ -403,8 +430,9 @@ docker compose config --quiet
 - 로컬에서 **신규 테이블 추가만으로는 어떤 데이터도 지워지지 않는다.**
 - 기존 테이블이 어긋나면 로컬은 재생성하고 서버는 기동을 거부한다.
 - `SCHEMA_AUTO_RESET=false`에서는 DB를 지우지도, 수정하지도 않는다.
-- 4-5 리허설이 compose Postgres에서 통과하고, 결과를 `HANDOFF.md` 6절에 기록한다.
-  SQLite pytest만으로는 reflect 기반 drop의 외래키 처리를 검증할 수 없다.
+- 8-1의 Postgres 실행이 통과하고 결과를 `HANDOFF.md` 6절에 기록한다. SQLite pytest만으로는
+  reflect 기반 drop의 외래키 처리를 검증할 수 없다.
+- (Alembic 도입 후) 4-5 리허설이 통과한다.
 
 ## 10. 함께 갱신할 문서
 
