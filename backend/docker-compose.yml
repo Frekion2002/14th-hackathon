@@ -60,7 +60,9 @@ services:
       - "7881:7881"
       - "7882:7882/udp"
     volumes:
-      - ./deploy/livekit.yaml:/etc/livekit/livekit.yaml:ro
+      # 클라우드 인스턴스에서는 LIVEKIT_CONFIG_FILE=livekit-cloud.yaml로 바꾼다.
+      # 공인 IP 뒤에서 기본값(use_external_ip:false)을 쓰면 통화는 연결되고 소리만 안 난다.
+      - ./deploy/${LIVEKIT_CONFIG_FILE:-livekit.yaml}:/etc/livekit/livekit.yaml:ro
 
   egress:
     image: livekit/egress:v1.12.0

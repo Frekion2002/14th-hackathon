@@ -1,0 +1,38 @@
+# 공인 IP 뒤에 있는 클라우드 인스턴스(AWS EC2, 가비아)용 LiveKit 설정.
+#
+# 로컬 LAN용 `livekit.yaml`과 단 하나가 다르다: `rtc.use_external_ip`.
+# 클라우드 인스턴스는 자기 사설 IP만 보고 클라이언트는 공인 IP로 접속한다.
+# false로 두면 LiveKit이 ICE 후보로 사설 IP를 광고해 미디어가 연결되지 않는다.
+# signaling(7880)은 정상 동작하므로 통화가 연결된 것처럼 보이고 소리만 나지 않는다.
+#
+# true면 LiveKit이 STUN으로 공인 IP를 자동 탐지한다. 자동 탐지가 실패하면
+# `rtc.node_ip: <공인 IP>`를 직접 지정한다.
+
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: true
+
+redis:
+  address: redis:6379
+
+# 개발용 고정 키다. 인스턴스를 공개 인터넷에 열어 두는 배포에서는 반드시 교체한다.
+# 짧은 검증에서는 보안 그룹 인바운드를 본인 공인 IP로 제한해 노출을 막는다.
+keys:
+  collog-dev-key: collog-dev-secret-change-before-production
+
+webhook:
+  api_key: collog-dev-key
+  urls:
+    - http://backend:8080/v1/webhooks/livekit
+
+room:
+  empty_timeout: 60
+  departure_timeout: 20
+
+logging:
+  level: info
