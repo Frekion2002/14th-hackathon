@@ -277,28 +277,36 @@ guard가 기동을 거부한다. 순서를 잊어도 조용히 잘못된 상태�
 서버가 2026-08-28에 사라진다. 그 안에 데모가 끝나야 하며, 이 기간 내내 실기기 통화 기록이
 보존돼야 한다(1-2절).
 
-### 5-2. 메모리: Egress를 켤 수 없다
+### 5-2. 메모리: Egress도 올라갈 것으로 본다
 
-`docker-compose.yml`의 `egress`는 `shm_size: "1gb"`와 `cap_add: ["SYS_ADMIN"]`을 요구한다.
-LiveKit Egress는 내부적으로 Chrome/GStreamer를 실행한다.
+이 절의 이전 판은 "4 GB에 Egress를 못 올린다"고 단정했다. 근거 두 개가 모두 틀려서 정정한다.
+
+- `shm_size: "1gb"`는 **선점이 아니라 `/dev/shm` tmpfs의 상한**이다. tmpfs는 실제로 쓴 만큼만
+  메모리를 차지하므로 컨테이너 기동만으로 1 GB가 사라지지 않는다.
+- **이 프로젝트는 Chrome을 쓰지 않는다.** `app/services/livekit.py`가 호출하는 것은
+  `start_track_egress`, 즉 Track Egress다. Chrome/GStreamer 렌더링이 필요한 것은 Room
+  Composite이며 `egress.yaml`의 `enable_chrome_sandbox`는 egress 바이너리가 composite도
+  지원하기 때문에 있는 설정이다. 오디오 트랙 하나를 파일로 쓰는 경로는 훨씬 가볍다.
 
 | 서비스 | 대략 |
 |---|---|
-| postgres + redis + minio | ~500 MB |
-| livekit | ~200 MB |
-| **egress** | **1 GB shm + Chrome/GStreamer 1~1.5 GB** |
-| backend (librosa/numpy) | ~400 MB |
-| backend + onnxruntime (`feat/hear-cough-detector` 병합 후) | +~200 MB |
+| postgres + redis + minio | ~430 MB |
+| livekit | ~150 MB |
+| egress (track only) | ~150 MB |
+| backend (librosa/numpy + onnxruntime) | ~600 MB |
 
-4 GB를 넘긴다. 2 vCore에서 Egress 트랜스코딩과 `librosa.pyin`을 동시에 돌리는 것도 무리다.
+합계 대략 1.3 GB로 4 GB에 들어간다. **따라서 양쪽 Track Egress를 켠 정상 구성으로 배포하고,
+두 참여자 분석도 설계대로 동작한다.** Phase 2의 양쪽 기기 PCM upload는 이 구성의 선행 조건이
+아니다.
 
-**따라서 가비아 서버는 `ALLOW_RAW_ONLY_ANALYSIS=true`로 운영한다.** 이 mode는 `/accept`가
-Track Egress 조회·시작을 건너뛴다(2026-08-13 `fix/skip-track-egress-raw-only`에서 도입,
-회귀 test 있음).
+남는 제약은 메모리가 아니라 **2 vCore**다. 통화 중에는 LiveKit SFU와 Egress 먹싱이, 통화
+후에는 `librosa.pyin`이 CPU를 쓴다. 분석은 통화 종료 후에 돌아 시간이 겹치지 않으므로 동시
+통화 1건인 시연에서는 문제되지 않을 것으로 본다.
 
-이 구성에는 선행 조건이 있다. 현재 raw-only는 부모 PCM만 다루므로 양 참여자 분석이 되지
-않는다. 계획서 Phase 2의 "양쪽 기기의 PCM upload 권한과 `AudioAsset.ownerUserId` 추가"가
-완료돼야 Egress 없이도 두 참여자를 분석할 수 있다.
+**위 수치는 실측이 아니라 추정이다. 2026-08-18에 서버에서 확인한다.** 실패하면
+`ALLOW_RAW_ONLY_ANALYSIS=true`로 내리는 폴백이 이미 있다(2026-08-13
+`fix/skip-track-egress-raw-only`, 회귀 test 있음). 이 mode에서는 `/accept`가 Track Egress
+조회·시작을 건너뛰고 부모 PCM만 분석하므로 양 참여자 분석이 되지 않는다.
 
 **정리하면 2026-08-18 전에 끝나야 하는 것은 Phase 1만이 아니라 Phase 2의 PCM 양방향
 업로드까지다.**
@@ -322,8 +330,9 @@ Track Egress 조회·시작을 건너뛴다(2026-08-13 `fix/skip-track-egress-ra
 
 ### 5-4. 스키마 설계에 미치는 영향
 
-- 서버는 `SCHEMA_AUTO_RESET=false`, `ALLOW_RAW_ONLY_ANALYSIS=true`, `APP_ENV=development`로
-  뜬다. 마지막 값은 3-5절의 이유(dev OTP)로 강제된다.
+- 서버는 `SCHEMA_AUTO_RESET=false`, `APP_ENV=development`로 뜬다. 마지막 값은 3-5절의
+  이유(dev OTP)로 강제된다. `ALLOW_RAW_ONLY_ANALYSIS`는 기본값 `false`로 두고, 5-2절의
+  실측이 실패할 때만 켠다.
 - 서버 수명이 10일이므로 Alembic이 감당해야 하는 것은 그 기간의 스키마 변경뿐이다.
   baseline 하나와 그 위의 소수 migration으로 충분하며, 긴 revision 히스토리를 설계할 필요가
   없다.
