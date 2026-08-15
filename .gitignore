@@ -6,6 +6,9 @@ secrets/
 .data/
 *.db
 
+# HAI-DEF 약관 대상 모델 가중치. scripts/fetch_cough_model.py로 각자 받는다.
+backend/models/
+
 # Python
 .venv/
 __pycache__/

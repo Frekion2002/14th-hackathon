@@ -17,6 +17,7 @@ from app.models import Metric
 from app.schemas import ExtractionFact, GeminiExtractionResponse
 from app.services.acoustics import (
     AcousticAnalysisInput,
+    AcousticMeasurement,
     AudioDecodeError,
     CollogAcousticAnalyzer,
     decode_pcm_wav,
@@ -191,16 +192,20 @@ async def test_acoustic_analyzer_computes_all_four_metrics() -> None:
     )
     by_metric = {item.metric: item for item in results}
     assert set(by_metric) == set(Metric)
-    assert {item.status for item in results} == {"OK"}
     assert by_metric[Metric.SPEECH_RATE].value == pytest.approx(480, rel=0.01)
     assert by_metric[Metric.PAUSE_RATIO].value == pytest.approx(40, abs=0.1)
     assert by_metric[Metric.F0_VARIATION].value is not None
     assert by_metric[Metric.F0_VARIATION].value < 0.2
-    assert by_metric[Metric.COUGH_EVENTS].value == 0
+    assert by_metric[Metric.SPEECH_RATE].status == "OK"
+    assert by_metric[Metric.PAUSE_RATIO].status == "OK"
+    assert by_metric[Metric.F0_VARIATION].status == "OK"
+    # 기침은 검증 전까지 숫자를 만들지 않는다.
+    assert by_metric[Metric.COUGH_EVENTS].status == "UNMEASURABLE"
+    assert by_metric[Metric.COUGH_EVENTS].value is None
 
 
-async def test_cough_candidate_detector_counts_separated_transients() -> None:
-    sample_rate = 16_000
+def transient_wav(sample_rate: int = 16_000) -> bytes:
+    """배경음 위에 0.22초 광대역 폭발음 두 개를 심은 결정론적 fixture."""
     seconds = 8
     time = np.arange(sample_rate * seconds) / sample_rate
     samples = 0.03 * np.sin(2 * math.pi * 150 * time)
@@ -209,20 +214,73 @@ async def test_cough_candidate_detector_counts_separated_transients() -> None:
         start = round(start_seconds * sample_rate)
         end = start + round(0.22 * sample_rate)
         samples[start:end] += 0.75 * random.normal(size=end - start) * np.hanning(end - start)
-    analyzer = CollogAcousticAnalyzer(Settings(mock_external_services=True))
-    results = await analyzer.analyze(
+    return pcm_wav(np.clip(samples, -0.95, 0.95), sample_rate)
+
+
+async def analyze_transients(settings: Settings) -> AcousticMeasurement:
+    results = await CollogAcousticAnalyzer(settings).analyze(
         AcousticAnalysisInput(
-            audio=pcm_wav(np.clip(samples, -0.95, 0.95)),
+            audio=transient_wav(),
             content_type="audio/wav",
-            declared_sample_rate=sample_rate,
+            declared_sample_rate=16_000,
             source="DEVICE_RAW",
             parent_segments=timing_segments(),
             parent_speech_seconds=25,
         )
     )
-    cough = next(item for item in results if item.metric == Metric.COUGH_EVENTS)
+    return next(item for item in results if item.metric == Metric.COUGH_EVENTS)
+
+
+async def test_cough_events_stay_unmeasurable_until_the_detector_is_validated() -> None:
+    # transient-heuristic-v1은 실제 기침 녹음에서 재현율이 0에 가깝다. 합성 폭발음을 세는
+    # 능력이 남아 있어도 `0.0 OK`가 기준선에 쌓이면 안 되므로 값 자체를 내보내지 않는다.
+    cough = await analyze_transients(Settings(mock_external_services=True))
+    assert cough.status == "UNMEASURABLE"
+    assert cough.unmeasurable_reason == "DETECTOR_NOT_VALIDATED"
+    assert cough.value is None
+
+
+async def test_cough_candidate_detector_counts_separated_transients() -> None:
+    # calibration harness가 회귀를 측정할 수 있도록 heuristic 계산 경로는 살아 있어야 한다.
+    cough = await analyze_transients(
+        Settings(
+            mock_external_services=True,
+            cough_detector_validated=True,
+            cough_detector="transient-heuristic-v1",
+        )
+    )
     assert cough.status == "OK"
     assert cough.value == 2
+    assert cough.unit == "회"
+
+
+async def test_hear_detector_reports_missing_model_instead_of_guessing() -> None:
+    # 모델 가중치는 HAI-DEF 약관 대상이라 저장소에 없다. 파일이 없을 때 조용히 0을 만들거나
+    # 예외로 파이프라인을 끊지 않고 사유를 남겨야 한다.
+    cough = await analyze_transients(
+        Settings(
+            mock_external_services=True,
+            cough_detector_validated=True,
+            cough_model_path=Path("models/does-not-exist.onnx"),
+        )
+    )
+    assert cough.status == "UNMEASURABLE"
+    assert cough.unmeasurable_reason == "MODEL_UNAVAILABLE"
+    assert cough.unit == "구간"
+
+
+async def test_hear_detector_rejects_a_model_with_an_unexpected_checksum(tmp_path: Path) -> None:
+    impostor = tmp_path / "hear-event-detector-small.onnx"
+    impostor.write_bytes(b"not the model")
+    cough = await analyze_transients(
+        Settings(
+            mock_external_services=True,
+            cough_detector_validated=True,
+            cough_model_path=impostor,
+        )
+    )
+    assert cough.status == "UNMEASURABLE"
+    assert cough.unmeasurable_reason == "MODEL_CHECKSUM_MISMATCH"
 
 
 def test_pcm_quality_failures_are_explicit() -> None:

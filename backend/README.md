@@ -62,6 +62,21 @@ uv run python scripts/seed_demo_family.py
 배포 환경은 `SCHEMA_AUTO_RESET=false`로 띄운다. 그 환경의 스키마는 Alembic이 소유하며 guard는
 검증만 한다. 자세한 근거와 migration 절차는 `docs/schema-management-design.md`에 있다.
 
+### 기침 detector 모델 (선택)
+
+`COUGH_EVENTS`는 기본값이 `UNMEASURABLE`이라 모델 없이도 나머지 지표는 전부 동작한다.
+기침 detector를 직접 돌려 보려면 한 번 받아 둔다.
+
+```bash
+# https://huggingface.co/google/hear 에서 약관 동의 후 read 토큰 발급
+HF_TOKEN=hf_... uv run --with tensorflow --with tf2onnx python scripts/fetch_cough_model.py
+```
+
+가중치는 Health AI Developer Foundations 약관 대상이라 저장소에 커밋하지 않는다.
+`backend/models/`는 `.gitignore` 대상이며 산출물은 약 5 MB다. 변환에만 TensorFlow가 필요하고
+런타임은 `onnxruntime`만 쓴다. 파일이 없으면 `MODEL_UNAVAILABLE`, sha256이 다르면
+`MODEL_CHECKSUM_MISMATCH`로 떨어지며 어느 경우에도 숫자를 만들지 않는다.
+
 ## self-hosted 전체 스택
 
 Docker Compose는 다음 서비스를 한 번에 실행한다.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import math
 import re
@@ -48,6 +49,104 @@ class AcousticAnalyzer:
         raise NotImplementedError
 
 
+class ModelUnavailable(RuntimeError):
+    pass
+
+
+def cough_unit(settings: Settings) -> str:
+    """detector마다 세는 대상이 다르므로 단위도 함께 바뀐다.
+
+    `transient-heuristic-v1`은 transient를 세어 `회`, HeAR detector는 2초 window가 겹쳐
+    개별 기침을 분리하지 못하므로 연속 검출 `구간`을 센다. 기준선은 같은 analyzer version
+    끼리만 비교하므로 단위가 섞이지 않는다.
+    """
+    return "구간" if settings.cough_detector == "hear-event-detector-small-v1" else "회"
+
+
+class HearCoughDetector:
+    """HeAR health acoustic event detector(`google/hear`의 `event_detector_small`)의 ONNX 변환본.
+
+    2초/16 kHz mono clip마다 8 class 확률을 낸다. 0번이 `Cough`이고 `Throat Clear`, `Laugh`,
+    `Sneeze`가 별도 class로 나오므로 hard negative를 무엇으로 오인했는지 구분할 수 있다.
+
+    window가 2초라 "기침이 있는가"에는 답하지만 "몇 회인가"에는 답하지 못한다. 기침 한 번이
+    앞뒤 window를 모두 양성으로 만들기 때문이다. 그래서 여기서 세는 값은 기침 횟수가 아니라
+    연속 검출 구간의 수다.
+    """
+
+    LABELS = (
+        "Cough",
+        "Snore",
+        "Baby Cough",
+        "Breathe",
+        "Sneeze",
+        "Throat Clear",
+        "Laugh",
+        "Speech",
+    )
+    COUGH_INDEX = 0
+    CLIP_SAMPLES = 32_000
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self._session: Any | None = None
+        self._input_name: str = ""
+
+    def _load(self) -> Any:
+        if self._session is not None:
+            return self._session
+        path = self.settings.cough_model_path
+        if not path.is_file():
+            raise ModelUnavailable("MODEL_UNAVAILABLE")
+        if self.settings.cough_model_sha256:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if digest != self.settings.cough_model_sha256:
+                raise ModelUnavailable("MODEL_CHECKSUM_MISMATCH")
+        import onnxruntime
+
+        session = onnxruntime.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        self._input_name = session.get_inputs()[0].name
+        self._session = session
+        return session
+
+    def scores(self, samples: np.ndarray) -> np.ndarray:
+        """clip별 8 class 확률을 `(clips, 8)`로 돌려준다."""
+        session = self._load()
+        clips = frame_clips(samples, self.CLIP_SAMPLES, self._hop_samples())
+        # 내보낸 signature가 batch 1로 고정되어 있어 clip 단위로 넣는다.
+        return np.stack(
+            [session.run(None, {self._input_name: clip[None, :]})[0][0] for clip in clips]
+        )
+
+    def _hop_samples(self) -> int:
+        return max(1, round(self.settings.cough_window_hop_seconds * 16_000))
+
+    def detect(self, samples: np.ndarray) -> AcousticMeasurement:
+        try:
+            scores = self.scores(samples)
+        except ModelUnavailable as exc:
+            return unmeasurable(Metric.COUGH_EVENTS, cough_unit(self.settings), str(exc))
+        above = scores[:, self.COUGH_INDEX] >= self.settings.cough_detection_threshold
+        count = merge_patch_events(
+            np.flatnonzero(above),
+            self._hop_samples() / 16_000,
+            self.settings.cough_merge_gap_seconds,
+        )
+        return measured(Metric.COUGH_EVENTS, float(count), cough_unit(self.settings))
+
+
+def frame_clips(samples: np.ndarray, clip_samples: int, hop_samples: int) -> np.ndarray:
+    if samples.size < clip_samples:
+        samples = np.pad(samples, (0, clip_samples - samples.size))
+    starts = range(0, samples.size - clip_samples + 1, hop_samples)
+    return np.stack(
+        [
+            np.ascontiguousarray(samples[start : start + clip_samples], dtype=np.float32)
+            for start in starts
+        ]
+    )
+
+
 class CollogAcousticAnalyzer(AcousticAnalyzer):
     """Versioned, conservative prototype analyzer for the four hackathon metrics.
 
@@ -57,8 +156,26 @@ class CollogAcousticAnalyzer(AcousticAnalyzer):
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.cough_detector = (
+            HearCoughDetector(settings)
+            if settings.cough_detector == "hear-event-detector-small-v1"
+            else None
+        )
 
     async def analyze(self, item: AcousticAnalysisInput) -> list[AcousticMeasurement]:
+        measurements = await self._analyze(item)
+        if self.settings.cough_detector_validated:
+            return measurements
+        # 검증 전까지 어떤 경로로 계산됐든 기침 값은 내보내지 않는다. 품질 실패 사유보다
+        # detector 미검증이 우선하는 사실이므로 이유도 함께 덮어쓴다.
+        return [
+            unmeasurable(Metric.COUGH_EVENTS, cough_unit(self.settings), "DETECTOR_NOT_VALIDATED")
+            if measurement.metric is Metric.COUGH_EVENTS
+            else measurement
+            for measurement in measurements
+        ]
+
+    async def _analyze(self, item: AcousticAnalysisInput) -> list[AcousticMeasurement]:
         if item.parent_speech_seconds < self.settings.parent_min_speech_seconds:
             return [
                 unmeasurable(metric, unit, "INSUFFICIENT_PARENT_SPEECH")
@@ -66,14 +183,14 @@ class CollogAcousticAnalyzer(AcousticAnalyzer):
                     (Metric.SPEECH_RATE, "음절/분"),
                     (Metric.PAUSE_RATIO, "%"),
                     (Metric.F0_VARIATION, "semitone_mad"),
-                    (Metric.COUGH_EVENTS, "회"),
+                    (Metric.COUGH_EVENTS, cough_unit(self.settings)),
                 )
             ]
         timing = [self._speech_rate(item), self._pause_ratio(item)]
         if item.source != "DEVICE_RAW":
             return timing + [
                 unmeasurable(Metric.F0_VARIATION, "semitone_mad", "SOURCE_NOT_RAW"),
-                unmeasurable(Metric.COUGH_EVENTS, "회", "SOURCE_NOT_RAW"),
+                unmeasurable(Metric.COUGH_EVENTS, cough_unit(self.settings), "SOURCE_NOT_RAW"),
             ]
         if item.content_type.split(";", 1)[0].strip().lower() not in {
             "audio/wav",
@@ -82,7 +199,9 @@ class CollogAcousticAnalyzer(AcousticAnalyzer):
         }:
             return timing + [
                 unmeasurable(Metric.F0_VARIATION, "semitone_mad", "UNSUPPORTED_AUDIO_FORMAT"),
-                unmeasurable(Metric.COUGH_EVENTS, "회", "UNSUPPORTED_AUDIO_FORMAT"),
+                unmeasurable(
+                    Metric.COUGH_EVENTS, cough_unit(self.settings), "UNSUPPORTED_AUDIO_FORMAT"
+                ),
             ]
         try:
             waveform = await asyncio.to_thread(
@@ -92,14 +211,14 @@ class CollogAcousticAnalyzer(AcousticAnalyzer):
             reason = str(exc) or "INVALID_AUDIO"
             return timing + [
                 unmeasurable(Metric.F0_VARIATION, "semitone_mad", reason),
-                unmeasurable(Metric.COUGH_EVENTS, "회", reason),
+                unmeasurable(Metric.COUGH_EVENTS, cough_unit(self.settings), reason),
             ]
 
         quality_reason = waveform_quality_reason(waveform, self.settings)
         if quality_reason:
             return timing + [
                 unmeasurable(Metric.F0_VARIATION, "semitone_mad", quality_reason),
-                unmeasurable(Metric.COUGH_EVENTS, "회", quality_reason),
+                unmeasurable(Metric.COUGH_EVENTS, cough_unit(self.settings), quality_reason),
             ]
         f0, cough = await asyncio.to_thread(self._waveform_metrics, waveform)
         return timing + [f0, cough]
@@ -141,7 +260,12 @@ class CollogAcousticAnalyzer(AcousticAnalyzer):
         self, waveform: Waveform
     ) -> tuple[AcousticMeasurement, AcousticMeasurement]:
         samples = resample_16k(waveform.samples, waveform.sample_rate)
-        return self._f0_variation(samples, 16_000), self._cough_candidates(samples, 16_000)
+        cough = (
+            self.cough_detector.detect(samples)
+            if self.cough_detector is not None
+            else self._cough_candidates(samples, 16_000)
+        )
+        return self._f0_variation(samples, 16_000), cough
 
     def _f0_variation(self, samples: np.ndarray, sample_rate: int) -> AcousticMeasurement:
         import librosa
@@ -169,6 +293,8 @@ class CollogAcousticAnalyzer(AcousticAnalyzer):
         return measured(Metric.F0_VARIATION, spread, "semitone_mad")
 
     def _cough_candidates(self, samples: np.ndarray, sample_rate: int) -> AcousticMeasurement:
+        """transient-heuristic-v1. 검증 실패로 `analyze`가 결과를 덮어쓰지만, calibration
+        harness가 회귀를 측정할 수 있도록 계산 경로는 그대로 둔다."""
         frame_length = round(0.96 * sample_rate)
         hop_length = round(0.48 * sample_rate)
         if samples.size < frame_length:

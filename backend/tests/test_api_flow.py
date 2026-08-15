@@ -227,7 +227,13 @@ def test_complete_call_pipeline(client: TestClient) -> None:
     acoustics = client.get(f"/v1/calls/{call_id}/acoustic-features", headers=auth(child_token))
     assert acoustics.status_code == 200
     assert len(acoustics.json()["features"]) == 4
-    assert {item["status"] for item in acoustics.json()["features"]} == {"OK"}
+    by_metric = {item["metric"]: item for item in acoustics.json()["features"]}
+    assert {item["status"] for metric, item in by_metric.items() if metric != "COUGH_EVENTS"} == {
+        "OK"
+    }
+    # 기침 detector는 검증 전이라 파이프라인 끝까지 UNMEASURABLE로 흘러야 한다.
+    assert by_metric["COUGH_EVENTS"]["status"] == "UNMEASURABLE"
+    assert by_metric["COUGH_EVENTS"]["unmeasurableReason"] == "DETECTOR_NOT_VALIDATED"
     # 품질 게이트 상수를 보정하면 analyzer version이 올라간다. 값 자체를 고정하는 대신
     # 실행한 설정이 응답에 그대로 기록되는지 확인한다.
     assert (
