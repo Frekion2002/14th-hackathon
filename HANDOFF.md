@@ -175,12 +175,23 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 �
 - 되묻기 탐지 재현율 미측정. `repeat-ko-v2`에서 `어` 부분 일치 오탐은 고쳤다.
 - 전체 40-case 실제 Gemini eval. provider가 처리한 7건은 7/7, 나머지 33건은 free-tier quota로
   요청 자체가 실패해 미평가다.
-- **시연용 과거 4주 더미 데이터 seed가 없다.** `scripts/seed_demo_family.py`는 초대·가족
-  구성원·동의·프로필까지만 만들고 통화·기준선·리포트를 하나도 만들지 않는다. 기준선은 같은
-  time slot의 유효 통화가 4개 calendar week에 걸쳐 최소 주 1회 쌓여야 비교 문장을 만들므로,
-  서버를 새로 띄우고 실제 통화를 몇 번 해도 리포트는 `기준선 수집 중`만 나온다. 주간 리포트
-  시연이 성립하려면 과거 4주 더미 seed가 필요하다. 계획서 82행과 235행이 요구하는 항목이며
-  더미임을 UI에서 명확히 표시해야 한다.
+- **시연용 과거 더미 데이터 seed가 없다.** `scripts/seed_demo_family.py`는 초대·가족
+  구성원·동의·프로필까지만 만들고 통화·기준선·리포트를 하나도 만들지 않는다. 서버를 새로
+  띄우고 실제 통화를 몇 번 해도 리포트는 `기준선 수집 중`만 나온다. 계획서 82행과 235행이
+  요구하는 항목이며 더미임을 UI에서 명확히 표시해야 한다. 필요한 분량은 **4주가 아니라
+  8주**다.
+  - `baseline_required_samples=4`는 통화 4건이 아니라 **서로 다른 ISO 주 4개**를 뜻한다.
+    `weekly_medians()`가 주 단위로 묶으므로 한 주에 몇 번을 통화해도 표본 1개다.
+  - ANCHOR는 가장 이른 4주, ROLLING은 최근 4주를 잡는다. 4주만 넣으면 두 기준선이 같은
+    주를 집어 `vs_anchor`와 `vs_rolling`이 동일해진다.
+  - **이번 주(W-0)도 반드시 포함해야 한다.** `SignalService.process_call()`이 현재 통화를
+    기준선에서 제외하므로, W-0이 비어 있으면 데모 당일 ROLLING이 3표본이 되어 `COLLECTING`
+    으로 떨어진다.
+  - seed는 실행 시점 기준 상대 날짜로 만들고 재실행 가능해야 한다. 절대 날짜로 한 번 넣으면
+    주가 밀려 며칠 뒤 ROLLING 창을 벗어난다. **데모 당일 아침에 다시 실행한다.**
+  - API로는 만들 수 없다. `CallCreate`에 날짜 필드가 없고 `started_at`/`observed_at`이
+    `utcnow()`로 고정된다. DB 직접 삽입이 필요하며 `Baseline`/`ChangeSignal`은 직접 만들지
+    말고 `SignalService.process_call()`을 호출해 실제 서비스 코드가 만들게 한다.
 - SMS OTP 실제 발송 provider. 개발 OTP는 `000000`이다.
 - ElevenLabs 실제 key/voice ID를 `.env`에 넣어 한국어 음색을 선택하고, 실기기에서 remote MP3
   재생과 상대 수락 즉시 중단을 확인해야 한다. 생성·storage 실패 시 local TTS 폴백은 test 완료다.
@@ -590,20 +601,33 @@ production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용�
 7. Phase 6: 실제 label/기기 검증을 통과한 음향값만 보조 연결
 8. Phase 7: 피그마 iOS 흐름과 두 iPhone 전체 E2E
 
-### 2026-08-18 가비아 서버 전에 끝나야 하는 것
+### 마감 일정과 남은 작업
 
-가비아 클라우드 지원은 **2026-08-18(화) ~ 08-28(금) 10일**이며 2 vCore / 4 GB / 공인 IP
-1개다. 서버가 생기는 순간부터 실기기 통화 기록이 보존 대상이 되므로 아래는 그 전에 끝나야
-한다. 사양·메모리 산정·배포 제약은 `backend/docs/schema-management-design.md` 5절에 있다.
+| 날짜 | 일 |
+|---|---|
+| 2026-08-18(화) | 가비아 클라우드 개시. 2 vCore / 4 GB / 공인 IP 1개 |
+| **2026-08-20(목)** | **제출 마감** |
+| 2026-08-25(화) | 데모 |
+| 2026-08-28(금) | 가비아 클라우드 종료 |
+
+제출이 08-20이므로 실질 개발 기간은 그때까지다. 배포 제약은
+`backend/docs/schema-management-design.md` 5절에 있다.
+
+**제출(08-20) 전에 필요한 것**
 
 | 항목 | 상태 | 근거 |
 |---|---|---|
 | schema guard | 완료 (2026-08-14) | 서버는 `SCHEMA_AUTO_RESET=false`로 뜬다 |
-| Alembic 도입 | 미착수 | 서버 스키마 소유자. 없으면 스키마 변경 때 DB를 지워야 한다 |
-| Phase 1 | 미착수 | ALTER가 몰린 유일한 구간 |
-| Phase 2의 양쪽 기기 PCM upload | 미착수 | 4 GB에 Egress를 못 올린다. `ALLOW_RAW_ONLY_ANALYSIS=true`로 운영해야 하는데 현재 raw-only는 부모 PCM만 다뤄 양 참여자 분석이 안 된다 |
-| 과거 4주 더미 seed | 미착수 | 없으면 주간 리포트가 `기준선 수집 중`만 표시된다 |
+| **8주 더미 seed** | 미착수 | 없으면 주간 리포트가 `기준선 수집 중`만 표시된다. 4주가 아니라 8주다. ANCHOR가 가장 이른 4주, ROLLING이 최근 4주를 잡으므로 4주만 넣으면 두 기준선이 같아진다. 이번 주(W-0)도 반드시 포함해야 한다. 데모 당일 실제 통화는 자기 자신을 기준선에서 제외하므로 W-0이 비면 ROLLING이 `COLLECTING`이 된다 |
+| **두 iPhone 실기기 통화** | 미완 | 2026-08-13에 한 대만 검증했고 자녀 쪽은 API로 대신했다. **핵심 시연 자체이며 가장 큰 리스크다** |
+| ElevenLabs key/voice ID | 미설정 | 없으면 iOS 로컬 TTS로 폴백돼 서버 TTS 차별점이 안 보인다 |
 | 도메인·TLS 방식 | **미결정** | 공인 IP만으로는 Let's Encrypt 발급이 안 된다. 무료 도메인+LE / ATS 예외 확대 / 자체 서명 중 선택이 필요하다 |
+
+**제출 이후로 미루는 것**
+
+Phase 1~7은 피그마 계약에 맞추는 일반화 작업이며 새 시연 화면을 만들지 않는다. 남은 기간에
+착수하면 위 항목을 완성할 시간을 잠식한다. Alembic도 서버 수명이 짧고 데모 데이터가 seed로
+재생성되므로 제출 전 필수가 아니다.
 
 기침은 보조 지표이므로 Phase 6의 모델 검증이 실패해도 값을 숨기면 핵심 demo를 막지 않는다.
 외부 자격증명이나 법무 승인처럼 코드로 결정할 수 없는 조건만 해당 phase에서 사용자에게 묻는다.
@@ -685,8 +709,14 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   (`DRIFTED`) 로컬은 재생성한다. `SCHEMA_AUTO_RESET=false`인 배포 환경에서는 스키마를 전혀
   수정하지 않고 기동을 거부한다. 설계는 `backend/docs/schema-management-design.md`.
 - 2026-08-14: 가비아 클라우드 지원 기간(08-18~08-28)과 사양(2 vCore / 4 GB / 공인 IP 1개)을
-  기준으로 배포 제약을 정리. 4 GB에는 `shm_size: 1gb`를 요구하는 LiveKit Egress를 올릴 수
-  없어 `ALLOW_RAW_ONLY_ANALYSIS=true` 운영이 전제이며, 그러려면 Phase 2의 양쪽 기기 PCM
-  upload가 먼저 필요하다. 공인 IP만으로는 Let's Encrypt 발급이 불가능해 도메인·TLS 방식
-  결정이 남았다. `scripts/seed_demo_family.py`가 통화·기준선·리포트를 만들지 않아 과거 4주
-  더미 seed가 없다는 점도 함께 확인했다.
+  기준으로 배포 제약을 정리. 공인 IP만으로는 Let's Encrypt 발급이 불가능해 도메인·TLS 방식
+  결정이 남았다. `scripts/seed_demo_family.py`가 통화·기준선·리포트를 만들지 않아 과거 더미
+  seed가 없다는 점도 함께 확인했다.
+- 2026-08-15: 위 항목의 "4 GB에 LiveKit Egress를 올릴 수 없다"를 정정. 근거 두 개가 모두
+  틀렸다. `shm_size`는 선점이 아니라 `/dev/shm` tmpfs 상한이고, 이 프로젝트는
+  `start_track_egress`를 쓰므로 Chrome이 뜨는 Room Composite 경로가 아니다. 스택 합계는
+  대략 1.3 GB로 추정되어 양쪽 Track Egress를 켠 정상 구성으로 배포한다.
+  `ALLOW_RAW_ONLY_ANALYSIS`는 기본값 `false`로 두고 08-18 실측이 실패할 때만 켠다. 이에 따라
+  Phase 2의 양쪽 기기 PCM upload는 배포 선행 조건이 아니다.
+- 2026-08-15: 제출 마감(08-20)과 데모(08-25) 일정을 반영해 8절을 다시 정리. 시연 더미
+  데이터에 필요한 분량이 4주가 아니라 8주임을 확인하고 근거를 `의도적으로 미완료`에 기록.
