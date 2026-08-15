@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     dev_otp_code: str = "000000"
     mock_external_services: bool = True
 
+    # 기동 시 모델과 DB 스키마가 어긋나면 개발 DB를 재생성한다. 배포 서버는 false로 두어
+    # guard가 스키마를 수정하지 못하게 한다. 그 환경의 스키마는 Alembic이 소유한다.
+    # app_env로 분기하지 않는다. app_env="production"은 dev OTP를 막아 로그인을 불가능하게
+    # 만들므로, 배포 서버도 development로 뜬다.
+    schema_auto_reset: bool = True
+
     livekit_url: str = "ws://localhost:7880"
     livekit_internal_url: str | None = None
     livekit_api_key: str = ""

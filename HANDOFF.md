@@ -1,6 +1,6 @@
 # 콜록(Collog) 개발 HANDOFF
 
-마지막 갱신: 2026-08-13 (Asia/Seoul)
+마지막 갱신: 2026-08-14 (Asia/Seoul)
 
 이 문서는 콜록 개발의 단일 인수인계 기준이다. 구현, 계약, 검증 결과, 미완료 항목이 바뀌면
 코드와 같은 커밋에서 반드시 이 문서를 갱신한다. 비밀키와 실제 건강정보는 기록하지 않는다.
@@ -39,12 +39,14 @@
 
 ## 1. 우리가 만드는 것
 
-콜록은 자녀와 부모의 일상적인 통화를 self-hosted LiveKit VoIP로 연결하고, 부모의 사전 동의가
-있는 통화만 분석해 개인 내 건강 변화 기록으로 만드는 iOS 우선 앱이다.
+콜록은 가족의 일상적인 통화를 self-hosted LiveKit VoIP로 연결하고, 이번 통화 건강 주체의
+사전 동의가 있는 통화만 분석해 개인 내 건강 변화 기록으로 만드는 iOS 우선 앱이다. 부모
+건강 관리가 핵심 시연이지만 데이터 모델은 부모·자녀 어느 가족 구성원도 subject가 될 수 있게
+일반화한다.
 
 핵심은 진단이 아니라 변화 관찰이다.
 
-- 질환 프로필을 바탕으로 다음 통화 질문을 제안한다.
+- 당사자가 확인한 질환·복용약·걱정 프로필을 바탕으로 다음 통화 질문을 제안한다.
 - 부모/자녀 음성을 분리해 Deepgram Nova-3 한국어 STT를 수행한다.
 - Gemini가 직접 언급된 증상·복약·활동·수면만 구조화한다.
 - 발화 속도, 휴지 비율, 기본주파수 변동, 기침 이벤트를 개인의 같은 시간대 기준선과 비교한다.
@@ -53,6 +55,23 @@
 
 제품의 절대 금지선은 질환 진단, 위험군 라벨, 응급도 판단, 치료 지시를 모델 출력으로 만드는
 것이다. 현재 LLM 시스템 지시와 응답 schema도 이 원칙에 맞춰져 있다.
+
+제품의 중심 데이터 흐름은 `본인 확인 프로필 → 검수된 맞춤 질문 → 통화 자기보고 구조화 →
+주·월간 변화 리포트`다. 기침/발화/휴지/F0는 이 흐름을 보조하는 음향 관찰이며 제품의 단독
+판단 근거가 아니다. 새 피그마가 부모·자녀 양방향 통화와 양쪽 건강 프로필을 전제로 하므로,
+현재 CHILD→PARENT 고정 모델을 일반화하기 위한 계약과 코드 차이는
+`backend/docs/profile-question-report-design.md`에 정리했다.
+
+2026-08-13 사용자는 별도로 결정할 수 없는 항목 외에는 권장 기본안을 채택했다. 이후 한 통화의
+상대방 한 명만 분석하는 초기안보다 caller/callee 두 참여자를 모두 각자의 건강 subject로
+분석하는 안을 선택했다. 연결 질문 target은 callee로 유지한다. 관계 기반 가족 role, 당사자
+확인 프로필, 최소 전사 보관, template 질문, observation 기반 리포트 등 확정 기본안과 완료
+조건은
+`backend/docs/implementation-plan-v2.md`가 실행 기준이다.
+
+필수 분석 동의는 앱 최초 온보딩 완료 조건이다. 정상 통화에서는 양 참여자 분석을 항상
+활성화하지만 서버 consent 검증을 제거하지 않는다. 동의 record가 없거나 철회/구버전이면 분석
+없는 통화를 허용하지 않고 `CONSENT_REQUIRED`로 온보딩에 돌려보낸다.
 
 ## 2. 확정된 기술 전제
 
@@ -86,10 +105,12 @@
 | 백엔드 P0 API | prototype 완료 | 인증·초대·동의·통화·LiveKit·리포트·정리 loop 구현. 운영용 SMS/worker/migration/실배포 검증은 별도 |
 
 백엔드/AI 해커톤 prototype의 미구현 코드는 크게 줄었고, 2026-08-13에 실기기 통화로
-STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 핵심은 음향 지표의 신뢰도다.
-네 지표 중 실제로 값이 나오는 것은 발화 속도뿐이며, 휴지 비율은 구조적으로 0에 가깝고
-기침은 탐지되지 않는다. 어떤 음향 수치도 의료 검증값으로 소개해서는 안 된다.
-근거와 보정 계획은 `backend/docs/calibration-todo.md`에 있다.
+STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 새 피그마의 양방향 통화·양쪽
+건강 프로필·복용약·걱정 항목·근거 기반 리포트 계약은 아직 현재 CHILD→PARENT prototype에
+반영되지 않았다. 음향 네 지표 중 실제로 값이 나오는 것은 발화 속도뿐이며, 휴지 비율은
+구조적으로 0에 가깝고 기침은 탐지되지 않는다. 어떤 음향 수치도 의료 검증값으로 소개해서는
+안 된다. 제품 차이는 `backend/docs/profile-question-report-design.md`, 음향 근거와 보정 계획은
+`backend/docs/calibration-todo.md`에 있다.
 
 ### 완료
 
@@ -119,10 +140,18 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 �
 - iOS LiveKit room 접속과 CallKit 세션 활성화 후 마이크 publish, remote MP3/iOS 질문 TTS
 - iPhone 2대 통화 자동 판정 CLI와 LAN/APNs/고정 대화/장애 분리 E2E 실행서
 - iOS 통화 화면의 ElevenLabs/iOS 폴백 badge, remote player 상태·즉시 중단 로그와 전체 로그 복사
-- Egress 없는 개발 환경의 부모 PCM-only 분석 mode와 회귀 test. 운영 기본값은 비활성
+- Egress 없는 개발 환경의 부모 PCM-only 분석 mode. `ALLOW_RAW_ONLY_ANALYSIS=true`이면
+  `/accept`가 Track Egress 조회·시작을 건너뛰어 부모의 LiveKit token 응답을 지연시키지 않는다.
+  운영 기본값은 비활성이며, Egress 호출 0회를 보장하는 회귀 test가 있다.
 
 ### 의도적으로 미완료
 
+- **새 피그마와 현재 백엔드의 건강 주체 모델이 다르다.** 현재 API는 자녀 발신·부모 분석,
+  부모 질환 코드 배열에 고정돼 있다. 부모/자녀 양방향 통화와 양 참여자 동시 분석,
+  복용약·걱정·출처·본인 확인, Q/A 관찰 event와 리포트 v2는 설계만 완료됐다.
+- **전체 STT segment 보관과 동의 문구가 불일치할 수 있다.** 성공 통화도 `transcripts.segments`에
+  전체 전사를 저장하지만 화면은 구조화 항목만 기록한다고 안내한다. 보관 기간과 최소 evidence
+  정책을 결정하고 코드/동의 문서를 함께 맞춰야 한다.
 - **`COUGH_EVENTS`는 `UNMEASURABLE(DETECTOR_NOT_VALIDATED)`로 고정했다 (v4).**
   `transient-heuristic-v1`이 공개 도메인 라벨 음원에서도 실패했다. 기침 4개 전부 0회,
   8개 파일 최고 점수 0.609로 임계값 0.65에 미달한다. 임계값을 0.40으로 낮추면 웃음이 7회로
@@ -146,6 +175,12 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 남은 �
 - 되묻기 탐지 재현율 미측정. `repeat-ko-v2`에서 `어` 부분 일치 오탐은 고쳤다.
 - 전체 40-case 실제 Gemini eval. provider가 처리한 7건은 7/7, 나머지 33건은 free-tier quota로
   요청 자체가 실패해 미평가다.
+- **시연용 과거 4주 더미 데이터 seed가 없다.** `scripts/seed_demo_family.py`는 초대·가족
+  구성원·동의·프로필까지만 만들고 통화·기준선·리포트를 하나도 만들지 않는다. 기준선은 같은
+  time slot의 유효 통화가 4개 calendar week에 걸쳐 최소 주 1회 쌓여야 비교 문장을 만들므로,
+  서버를 새로 띄우고 실제 통화를 몇 번 해도 리포트는 `기준선 수집 중`만 나온다. 주간 리포트
+  시연이 성립하려면 과거 4주 더미 seed가 필요하다. 계획서 82행과 235행이 요구하는 항목이며
+  더미임을 UI에서 명확히 표시해야 한다.
 - SMS OTP 실제 발송 provider. 개발 OTP는 `000000`이다.
 - ElevenLabs 실제 key/voice ID를 `.env`에 넣어 한국어 음색을 선택하고, 실기기에서 remote MP3
   재생과 상대 수락 즉시 중단을 확인해야 한다. 생성·storage 실패 시 local TTS 폴백은 test 완료다.
@@ -210,6 +245,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/app/container.py` | DB/storage/LiveKit/STT/LLM/APNs/pipeline 의존성 조립 |
 | `backend/app/team_portal.py` | 모바일/WebView 팀 포털 HTML과 비밀값 없는 provider 상태 snapshot |
 | `backend/app/database.py` | async engine/session/Base |
+| `backend/app/schema_guard.py` | 기동 시 모델과 DB 스키마 비교. 로컬은 재생성, 배포는 기동 거부 |
 | `backend/app/models.py` | 사용자, 가족, 동의, 통화, 오디오, 추출, 기준선, signal, report DB 모델 |
 | `backend/app/schemas.py` | camelCase API request/response와 Gemini 추출 schema |
 | `backend/app/security.py` | OTP hash, JWT 발급/인증, role 검사 |
@@ -247,6 +283,12 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/docs/two-iphone-e2e.md` | iPhone 2대 LAN/APNs/LiveKit/AI 전체 E2E 체크리스트와 장애 분리 |
 | `backend/docs/ai-transcript-design.md` | LLM 위치/prompt v2/eval과 되묻기 규칙 detector 설계 |
 | `backend/docs/acoustic-design.md` | 음향 4종 정의, 품질 gate, model, worker와 검증 기준 |
+| `backend/docs/voice-health-model-research.md` | HeAR/기침 detector 판정, 유사 서비스 비교, 되묻기·난청 한계와 검증 설계 |
+| `backend/docs/profile-question-report-design.md` | 피그마 기준 건강 프로필→질문→통화 자기보고→주·월간 리포트 계약과 현재 코드 차이 |
+| `backend/docs/implementation-plan-v2.md` | 승인된 권장 기본값, Phase 0~7 구현 순서·완료 조건, 실제 질문이 필요한 외부 조건 |
+| `backend/docs/schema-management-design.md` | 로컬 schema guard와 배포 Alembic의 두 축, 판정 규칙, 가비아 서버 배포 제약 |
+| `backend/docs/service-proposal-outline.md` | 초기 서비스 기획안을 개조식으로 재구성하고 현재 제품·구현·검증 상태에 맞춰 정정한 문서 |
+| `output/pdf/collog-service-proposal-outline.pdf` | 팀 공유·검토용 개조식 서비스 기획안 PDF 산출물 |
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
@@ -262,6 +304,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/tests/test_providers.py` | Deepgram/Gemini/APNs provider unit test |
 | `backend/tests/test_ai_pipeline.py` | prompt/repeat/acoustic/calendar-week deterministic test |
 | `backend/tests/test_tts.py` | ElevenLabs 요청 계약, cache/서명 URL, 장애 local 폴백 test |
+| `backend/tests/test_schema_guard.py` | 스키마 판정, ADDITIVE 데이터 보존, DRIFTED 재생성, 배포 기동 거부 test |
 | `backend/tests/conftest.py` | 격리 SQLite와 mock provider test app fixture |
 | `backend/pyproject.toml` | Python 의존성, ruff/pytest/build 설정 |
 | `backend/uv.lock` | 재현 가능한 dependency lock |
@@ -320,12 +363,29 @@ docker compose config --quiet
 - `uv run pytest -q`: 47 tests 통과, FastAPI TestClient의 upstream deprecation warning 1개
 - `uv build`: wheel/sdist 생성 성공
 - `docker compose config --quiet`: 통과. analyzer v3/품질 gate/raw-only 환경변수 전달 확인
+- `fix/skip-track-egress-raw-only` main 통합: `uv run ruff check .` 통과, `uv run pytest -q`
+  47 tests 통과. raw-only `/accept`가 Track Egress 조회·시작을 호출하지 않는 회귀 assertion 추가
 - Swift 전체 source `swiftc -frontend -parse`: 문법 검사 통과
 - `plutil -lint`: Xcode project, Info.plist, entitlement 통과
 - 이 Mac은 full Xcode가 아닌 Command Line Tools만 활성화되어 있어 이번 main 통합 시점에는
   `xcodebuild`를 재실행하지 못했다. 브랜치 작성자는 같은 소스를 Xcode/실기기에서 빌드해
   APNs sandbox CallKit 수신과 부모 PCM 분석을 확인했다고 기록했다.
 - generated OpenAPI: 27 paths / 28 operations
+
+2026-08-14 `feat/schema-guard` 검증 결과:
+
+- `uv run ruff check .`: 통과
+- `uv run pytest -q`: 61 tests 통과 (기존 47 + schema guard 14). warning은 기존 FastAPI
+  TestClient deprecation 1개로 변동 없음
+- `uv build`: wheel/sdist 생성 성공
+- `docker compose config --quiet`: 통과. `SCHEMA_AUTO_RESET` 전달 확인
+- Postgres 17 실측 통과: 같은 13개 test를 `GUARD_TEST_DATABASE_URL`로 `postgres:17-alpine`에
+  대해 실행해 전부 통과. 외래키 제약 20개가 걸린 상태에서 `DROP TABLE users`는
+  `cannot drop table users because other objects depend on it`으로 거부되지만 reflect 기반
+  정렬 drop은 성공하므로, SQLite가 검증하지 못하는 삭제 순서가 실제로 확인됐다. `MATCHED`
+  재실행 무동작과 `SCHEMA_AUTO_RESET=false` 정상 통과도 같은 DB에서 확인. 절차는
+  `backend/docs/schema-management-design.md` 8-1절
+- 미완료: Alembic 도입과 4-5절 배포 리허설
 - `docker-compose.yml`, `deploy/livekit.yaml`, `deploy/egress.yaml`: YAML parse 통과
 - Docker Compose 5.4.0 + Colima arm64에서 Postgres/Redis/MinIO/LiveKit/Egress/backend 전체
   stack을 새 librosa/numpy image로 재빌드·기동하고 health/container import 확인
@@ -385,7 +445,10 @@ Compose는 ignored `backend/private/`를 `/run/secrets/collog`에 read-only moun
 ## 7. 보안·데이터 불변조건
 
 - 최신 부모 동의가 `GRANTED`가 아니면 Egress와 PCM 업로드를 시작하지 않는다.
-- 동의 이력은 overwrite하지 않고 append-only로 쌓는다.
+- 동의 이력은 overwrite하지 않고 append-only로 쌓는다. 애플리케이션은 어떤 경우에도
+  동의 record를 수정하지 않는다. 단 `SCHEMA_AUTO_RESET=true`인 **로컬 개발 DB**는 스키마가
+  어긋날 때 통째로 재생성되므로 이력이 유지되지 않는다. 대상은 더미 데이터이며, 배포
+  환경은 `SCHEMA_AUTO_RESET=false`로 이 경로가 차단된다.
 - 부모 발화 20초 미만은 LLM/음향 변화 분석에서 제외한다.
 - 원본 오디오는 분석 성공 여부와 관계없이 폐기한다.
 - 저장 가능한 것은 구조화 텍스트, 파생 특징값, 리포트다.
@@ -401,6 +464,7 @@ Compose는 ignored `backend/private/`를 `/run/secrets/collog`에 read-only moun
 | `DEEPGRAM_API_KEY` | Deepgram Console 발급 | 필수 | Nova-3 한국어 STT |
 | `GEMINI_API_KEY` | Google AI Studio 발급 | 필수 | 구조화 LLM. OpenAI key와 동시에 필요하지 않음 |
 | `ELEVENLABS_API_KEY`/voice ID | ElevenLabs 발급·Voice Library 선택 | 서버 질문 음성 사용 시 필수 | 연결 대기 한국어 MP3. iOS에는 전달하지 않음 |
+| `HF_TOKEN` | Hugging Face 계정에서 HAI-DEF 약관 수락 후 발급 | HeAR detector artifact를 처음 받을 때만 필요 | gated model download. 앱/런타임 API key가 아니며 Git에 넣지 않음 |
 | `LIVEKIT_API_KEY/SECRET` | 우리가 직접 강한 난수로 생성 | 필수 | self-hosted room token, server API, Egress, webhook 서명 |
 | `JWT_SECRET` | 우리가 직접 강한 난수로 생성 | 필수 | 콜록 사용자 인증 JWT |
 | APNs `.p8`/Key ID/Team ID/Bundle ID | Apple Developer 발급·확인 | 실기기 백그라운드 수신 시 필수 | PushKit VoIP push |
@@ -416,6 +480,10 @@ Deepgram Aura TTS는 2026-08-11 공식 지원 언어에 한국어가 없어 사�
 `eleven_flash_v2_5`, `language_code=ko`, 기본 MP3 44.1 kHz/128 kbps를 사용한다. 생성물은 질문
 ID+voice/model/format/text hash로 cache하며 API key는 backend header에만 들어간다. ElevenLabs가
 실패하거나 설정되지 않으면 `ttsMode=IOS_LOCAL`로 질문별 폴백한다.
+
+HeAR model weight는 일반 Apache-2.0 artifact가 아니라 HAI-DEF 이용약관이 적용된다. 팀 책임자가
+약관을 수락하고 배포 조건을 검토하기 전에는 weight/TFLite 변환물을 public repository에
+commit하지 않는다. inference code는 Apache-2.0이지만 model weight의 배포 조건은 별도다.
 
 `JWT_SECRET`은 클라이언트용 값이 아니다. Swift/iOS·프론트엔드 팀원에게 전달하지 않는다.
 하나의 공용 백엔드만 사용하면 그 배포 환경에만 보관한다. 팀원이 각자 독립 로컬 백엔드를
@@ -507,23 +575,38 @@ production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용�
 
 ## 8. 다음 작업 우선순위
 
-1. 실제 cough 30개/hard-negative 30개로 `transient-heuristic-v1`을 검증한다. precision 0.85
-   미달이면 YAMNet/검증된 cough classifier로 교체한다.
-2. 40-case Gemini eval을 `--start/--limit/--delay`로 quota-safe하게 완료하고 실패 fixture를
-   prompt/schema에 반영한다.
-3. `backend/docs/two-iphone-e2e.md`의 고정 대화로 실제 iPhone 양단 통화를 하고
-   `scripts.verify_two_iphone_call`의 모든 check를 통과시킨다. APNs sandbox CallKit 수신은
-   한 대에서 검증됐고 양방향 음성, remote TTS 즉시 중단, 두 Egress는 아직이다.
-4. 통화 시작 직후 PCM 유실 여부를 대본과 전사로 확인하고, 재현되면 writer 부착 시점을
-   앞당기거나 짧은 pre-publish buffer를 둔다.
-5. iOS 초대·동의·질환 프로필 화면을 구현하고 개발 seed script 의존을 없앤다.
-6. 실제 iPhone 20~30통으로 PCM 품질 gate/F0/기침 threshold와 time-slot 분포를 freeze한다.
-7. background task를 Redis 기반 worker로 분리하고 idempotency/재시도를 보강한다.
-8. SMS OTP와 일반 APNs 알림 provider를 붙인다.
+구현 순서와 phase별 완료 조건은 `backend/docs/implementation-plan-v2.md`를 따른다.
 
-해커톤 핵심 demo 완료 기준은 1~4다. backend/AI 코드는 prototype 수준으로 구현됐고, 이제
-주된 blocker는 실제 label 음원과 iPhone 2대 검증이다. 5는 앱 UX 완성, 6은 신뢰도 보강,
-7~8과 DB migration/TLS/secret manager는 production 전환 작업이다.
+1. Phase 0: 미검증 cough 노출 차단, subject 계약 fixture, migration 기반 준비.
+   schema guard는 2026-08-14 완료. 남은 것은 Alembic 도입(`alembic.ini`, `migrations/env.py`,
+   baseline, Dockerfile COPY)과 compose Postgres 실측이며 설계는
+   `backend/docs/schema-management-design.md` 4~5절에 있다. 2026-08-18 가비아 서버가
+   `SCHEMA_AUTO_RESET=false`로 뜨므로 그 전에 끝나야 한다.
+2. Phase 1: 관계 기반 가족/subject와 질환·복용약·걱정 프로필/동의 철회
+3. Phase 2: `CallParticipant` 기반 양 참여자 분석·양방향 통화와 기존 iOS adapter
+4. Phase 3: anchor+dynamic 질문 정책과 ElevenLabs
+5. Phase 4: Q/A evidence 추출, 전체 transcript purge
+6. Phase 5: observation 기반 통화 결과·주간·월간 리포트/공유
+7. Phase 6: 실제 label/기기 검증을 통과한 음향값만 보조 연결
+8. Phase 7: 피그마 iOS 흐름과 두 iPhone 전체 E2E
+
+### 2026-08-18 가비아 서버 전에 끝나야 하는 것
+
+가비아 클라우드 지원은 **2026-08-18(화) ~ 08-28(금) 10일**이며 2 vCore / 4 GB / 공인 IP
+1개다. 서버가 생기는 순간부터 실기기 통화 기록이 보존 대상이 되므로 아래는 그 전에 끝나야
+한다. 사양·메모리 산정·배포 제약은 `backend/docs/schema-management-design.md` 5절에 있다.
+
+| 항목 | 상태 | 근거 |
+|---|---|---|
+| schema guard | 완료 (2026-08-14) | 서버는 `SCHEMA_AUTO_RESET=false`로 뜬다 |
+| Alembic 도입 | 미착수 | 서버 스키마 소유자. 없으면 스키마 변경 때 DB를 지워야 한다 |
+| Phase 1 | 미착수 | ALTER가 몰린 유일한 구간 |
+| Phase 2의 양쪽 기기 PCM upload | 미착수 | 4 GB에 Egress를 못 올린다. `ALLOW_RAW_ONLY_ANALYSIS=true`로 운영해야 하는데 현재 raw-only는 부모 PCM만 다뤄 양 참여자 분석이 안 된다 |
+| 과거 4주 더미 seed | 미착수 | 없으면 주간 리포트가 `기준선 수집 중`만 표시된다 |
+| 도메인·TLS 방식 | **미결정** | 공인 IP만으로는 Let's Encrypt 발급이 안 된다. 무료 도메인+LE / ATS 예외 확대 / 자체 서명 중 선택이 필요하다 |
+
+기침은 보조 지표이므로 Phase 6의 모델 검증이 실패해도 값을 숨기면 핵심 demo를 막지 않는다.
+외부 자격증명이나 법무 승인처럼 코드로 결정할 수 없는 조건만 해당 phase에서 사용자에게 묻는다.
 
 다음 AI는 구현 전에 반드시 이 문서와 `backend/README.md`, 관련 service/test를 먼저 읽는다.
 API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, 판단 불가능한 건강 지표를 임의의
@@ -568,6 +651,25 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-13: 두 iPhone preflight CLI, Docker APNs `.p8` read-only mount와 개발용 LAN ATS 설명 추가.
 - 2026-08-13: 통화 화면에 ElevenLabs source badge와 player 상태/폴백/상대 연결 중단 로그를 추가해
   두 iPhone 현장에서 server TTS 성공 여부를 명시적으로 증빙하도록 보강.
+- 2026-08-13: HeAR 논문·PyTorch model card·공개 MobileNetV3 event detector와 Hyfe/ResAppDx/
+  Swaasa/Sonde/Winterlight/hearWHO를 조사. cough count는 HeAR Small/YAMNet bake-off로 결정하고,
+  되묻기는 난청 판정이 아닌 문맥적 대화 수리 관찰값으로 제한하기로 정리.
+- 2026-08-13: PCM은 비압축 sample 형식이지만 iOS voice processing을 이미 거칠 수 있음을 명시.
+- 2026-08-13: 새 피그마 흐름을 기준으로 제품 중심축을 본인 확인 건강 프로필→맞춤 질문→통화
+  자기보고→주·월간 리포트로 확정. 부모/자녀 양방향 subject 모델, 복용약·걱정·입력 출처·본인
+  확인, Q/A 근거 추출, 리포트 출처 분리를 설계하고 현재 코드와의 차이를 기록.
+- 2026-08-13: 사용자가 결정 불가능 항목 외 권장 기본안을 승인. 관계 기반 role, callee subject,
+  최소 전사 보관, template 질문, observation report 등 기본안과 Phase 0~7 실행 계획을 확정.
+- 2026-08-13: 한 통화의 caller/callee를 모두 각자의 건강 subject로 동시 분석하도록 변경.
+  질문 target은 callee로 유지하고, 필수 동의를 온보딩 진입 조건으로 삼아 정상 통화는 양쪽
+  분석을 항상 활성화하기로 확정.
+- 2026-08-13: cough rate를 통화 표본 내 환산값으로 제한하고, 표준 질문 기반 대화 변화와 선택적 HealthKit
+  활동 추세를 결합하는 후속 제품 방향을 `voice-health-model-research.md`에 추가.
+- 2026-08-13: 초기 서비스 기획안을 개조식으로 재구성. 중복을 제거하고 양 참여자 분석,
+  필수 온보딩 동의, Deepgram/Gemini 역할, 근거 기반 리포트, 미검증 음향값 비노출을 반영.
+- 2026-08-13: Egress worker가 없는 raw-only 개발 구성에서 `/accept`가 Track Egress 응답을
+  기다리며 통화 연결과 DB transaction을 지연시키던 문제를 수정. raw-only일 때 Egress 조회·시작을
+  모두 생략하고, 일반 Compose의 양쪽 Track Egress 경로는 유지.
 - 2026-08-13: 공개 도메인 라벨 음원 8개로 `transient-heuristic-v1` 실패를 재현. 기침 4개 전부
   0회, 최고 점수 0.609로 임계값 0.65 미달이며 0.40으로 낮추면 웃음이 7회로 1위다. 항별 분해
   결과 죽은 항은 energy 하나이고(clip 자신의 median을 기준선으로 삼는 자기참조 구조),
@@ -577,3 +679,14 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   `onnxruntime`만 추가해 TensorFlow 없이 돈다. 모델은 HAI-DEF 약관 대상이라 저장소에 넣지 않고
   `scripts/fetch_cough_model.py`로 revision 고정·sha256 검증·NOTICE 생성을 거쳐 각자 받는다.
   `cough_detector_validated` 기본값은 `False`이므로 사용자에게 보이는 동작은 아직 변화 없다.
+- 2026-08-14: 기동 시 모델과 DB 스키마를 비교하는 schema guard 추가. `create_all()`이 기존
+  테이블을 ALTER하지 않아 스키마 변경이 조용히 무시되던 문제를 막는다. 신규 테이블만 늘어난
+  경우(`ADDITIVE`)는 데이터를 지우지 않고 그 테이블만 만들고, 기존 테이블이 어긋나면
+  (`DRIFTED`) 로컬은 재생성한다. `SCHEMA_AUTO_RESET=false`인 배포 환경에서는 스키마를 전혀
+  수정하지 않고 기동을 거부한다. 설계는 `backend/docs/schema-management-design.md`.
+- 2026-08-14: 가비아 클라우드 지원 기간(08-18~08-28)과 사양(2 vCore / 4 GB / 공인 IP 1개)을
+  기준으로 배포 제약을 정리. 4 GB에는 `shm_size: 1gb`를 요구하는 LiveKit Egress를 올릴 수
+  없어 `ALLOW_RAW_ONLY_ANALYSIS=true` 운영이 전제이며, 그러려면 Phase 2의 양쪽 기기 PCM
+  upload가 먼저 필요하다. 공인 IP만으로는 Let's Encrypt 발급이 불가능해 도메인·TLS 방식
+  결정이 남았다. `scripts/seed_demo_family.py`가 통화·기준선·리포트를 만들지 않아 과거 4주
+  더미 seed가 없다는 점도 함께 확인했다.

@@ -104,6 +104,8 @@ unit = semitone_mad
 patch를 750ms 기준으로 병합한다. 2026-08-13 공개 도메인 라벨 음원(기침 4, hard negative 4)으로
 측정한 결과 이 detector는 사용할 수 없다.
 
+모델 선정 근거와 유사 서비스 비교는 `voice-health-model-research.md`에 있다.
+
 | 항 | 가중치 | 실측 결과 |
 |---|---:|---|
 | energy | 0.40 | 기준선을 클립 자신의 median으로 잡아 5개 중 4개에서 0.00. 기침이 잦을수록 median이 올라가 스스로를 가린다 |
@@ -196,7 +198,8 @@ AcousticJob(callId, rawAudioUri, transcriptId, analyzerVersion)
 
 - decode: Python PCM WAV loader, resample: `librosa` + `soxr`
 - F0: `librosa.pyin`
-- cough: `transient-heuristic-v1`; validation 실패 시 YAMNet/검증된 ONNX classifier로 교체
+- cough: 현재 `transient-heuristic-v1`은 validation 실패. HeAR `event_detector_small`과 YAMNet
+  bake-off 후 선택 모델로 교체
 
 model artifact는 checksum과 license를 기록하고 container image에 pin한다. 외부 inference API로
 raw 건강 음성을 추가 전송하지 않는다.
@@ -220,9 +223,11 @@ raw 건강 음성을 추가 전송하지 않는다.
 ### cough validation
 
 실제 건강정보가 아닌 동의된 더미/공개 license 음원으로 cough 30개 이상, hard negative
-30개 이상(재채기·목 가다듬기·웃음·문 닫힘)을 label한다. threshold는 precision 우선으로
-선택하고 최소 목표를 precision 0.85, recall은 측정값과 함께 공개한다. 이 기준을 못 넘으면
-데모에서도 숫자를 확정값으로 표시하지 않는다.
+30개 이상(재채기·목 가다듬기·웃음·문 닫힘)을 label한다. 이는 pipeline smoke용이다. 모델
+선택용 in-domain bake-off는 5명 이상, cough bout 100개 이상, hard-negative 통화 1시간 이상을
+speaker 단위로 분리한다. threshold는 calibration split에서 precision 우선으로 선택하고 최소
+목표를 precision 0.85로 두되 recall과 FP/hour도 함께 공개한다. 이 기준을 못 넘으면 데모에서도
+숫자를 확정값으로 표시하지 않는다.
 
 ### 실기기 검증
 
@@ -255,7 +260,7 @@ raw PCM과 Egress 결과를 비교해 source 차이를 기록하되 raw PCM만 �
 12. 남음: 컨테이너 배포 시 모델 주입 경로. `Dockerfile`은 `app`과 `scripts`만 복사하므로
     이미지에 모델이 없다. `cough_detector_validated`를 켜기 전에 volume mount 또는 build
     secret으로 `HF_TOKEN`을 받아 빌드 중 획득하는 방식을 정한다
-13. production 후속: 별도 Redis worker/queue
+13. production 후속: 별도 Redis worker/queue와 model artifact checksum
 
 ## 참고
 
@@ -265,4 +270,8 @@ raw PCM과 Egress 결과를 비교해 source 차이를 기록하되 raw PCM만 �
 - [TensorFlow YAMNet tutorial](https://www.tensorflow.org/hub/tutorials/yamnet): 16 kHz mono 입력과
   AudioSet 521 class score
 - [Google AudioSet](https://research.google.com/audioset/): 범용 audio event ontology/dataset
+- [Google HeAR event detector demo](https://github.com/Google-Health/hear/blob/master/notebooks/hear_event_detector_demo.ipynb):
+  MobileNetV3 Small/Large, 8개 health event score, TFLite 변환 예제
+- [HeAR PyTorch model card](https://huggingface.co/google/hear-pytorch): 2초 음원을 512차원으로
+  바꾸는 ViT-L embedding model이며 cough detector 자체가 아님
 - [Deepgram Utterances](https://developers.deepgram.com/docs/utterances): utterance/word timing

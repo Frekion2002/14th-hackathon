@@ -22,7 +22,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await container.database.create_all()
+        await container.database.ensure_schema(auto_reset=settings.schema_auto_reset)
 
         async def cleanup_loop() -> None:
             while True:

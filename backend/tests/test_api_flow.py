@@ -255,11 +255,18 @@ def test_raw_only_development_pipeline_without_egress(client: TestClient) -> Non
     client.app.state.container.settings.allow_raw_only_analysis = True
     livekit = client.app.state.container.livekit
 
-    async def no_track_without_egress(room_name: str, identity: str) -> None:
+    async def unexpected_track_lookup(room_name: str, identity: str) -> None:
         del room_name, identity
-        return None
+        raise AssertionError("raw-only mode must not look up an Egress source track")
 
-    livekit.find_audio_track_id = no_track_without_egress
+    async def unexpected_egress_start(
+        room_name: str, track_id: str, object_key: str
+    ) -> None:
+        del room_name, track_id, object_key
+        raise AssertionError("raw-only mode must not start Track Egress")
+
+    livekit.find_audio_track_id = unexpected_track_lookup
+    livekit.start_track_egress = unexpected_egress_start
     created = client.post(
         "/v1/calls",
         headers=auth(child_token),

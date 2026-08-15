@@ -42,6 +42,26 @@ uv run uvicorn app.main:app --reload --port 8080
 `MOCK_EXTERNAL_SERVICES=true`에서는 LiveKit, Deepgram, Gemini 호출이 모의 구현으로
 대체된다. 운영 또는 통합 테스트에서만 `false`로 둔다.
 
+### 스키마가 바뀌었을 때
+
+기동 시 모델과 DB 스키마를 비교한다. `SQLAlchemy`의 `create_all()`은 기존 테이블을 ALTER하지
+않으므로, 이 검사가 없으면 스키마 변경이 조용히 무시되고 런타임에야 터진다.
+
+| 상황 | `SCHEMA_AUTO_RESET=true` (기본, 로컬) | `SCHEMA_AUTO_RESET=false` (배포) |
+|---|---|---|
+| 모델과 DB가 같음 | 아무것도 안 함 | 아무것도 안 함 |
+| 신규 테이블만 늘어남 | 그 테이블만 생성. **데이터 보존** | 기동 거부 |
+| 기존 테이블의 컬럼이 어긋남 | **DB 재생성** + WARNING | 기동 거부 |
+
+`git pull` 후 "DB를 재생성했습니다" WARNING이 보이면 데모 데이터를 다시 채운다.
+
+```bash
+uv run python scripts/seed_demo_family.py
+```
+
+배포 환경은 `SCHEMA_AUTO_RESET=false`로 띄운다. 그 환경의 스키마는 Alembic이 소유하며 guard는
+검증만 한다. 자세한 근거와 migration 절차는 `docs/schema-management-design.md`에 있다.
+
 ### 기침 detector 모델 (선택)
 
 `COUGH_EVENTS`는 기본값이 `UNMEASURABLE`이라 모델 없이도 나머지 지표는 전부 동작한다.
