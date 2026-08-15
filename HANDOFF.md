@@ -274,13 +274,15 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | 파일 | 역할 |
 |---|---|
 | `backend/docker-compose.yml` | 전체 self-hosted 개발 스택 |
-| `backend/deploy/livekit.yaml` | LiveKit/Redis/webhook/port 설정 |
+| `backend/deploy/livekit.yaml` | LiveKit/Redis/webhook/port 설정. 로컬 LAN용(`use_external_ip:false`) |
+| `backend/deploy/livekit-cloud.yaml` | 공인 IP 뒤 클라우드용. `use_external_ip:true` 하나만 다르다 |
 | `backend/deploy/egress.yaml` | Egress worker/MinIO 설정 |
 | `backend/Dockerfile` | API와 실기기 preflight/검증 CLI가 포함된 container image |
 | `backend/.env.example` | 비밀값 없는 환경변수 template |
 | `backend/private/README.md` | ignored APNs `.p8`의 local Compose read-only mount 위치 안내 |
 | `backend/docs/ios-call-flow.md` | Swift PushKit/CallKit/LiveKit/PCM 구현 계약 |
 | `backend/docs/two-iphone-e2e.md` | iPhone 2대 LAN/APNs/LiveKit/AI 전체 E2E 체크리스트와 장애 분리 |
+| `backend/docs/cloud-deploy.md` | 클라우드 배포 절차와 사전 검증. 인스턴스/보안 그룹/공인 IP 환경변수/확인 순서 |
 | `backend/docs/ai-transcript-design.md` | LLM 위치/prompt v2/eval과 되묻기 규칙 detector 설계 |
 | `backend/docs/acoustic-design.md` | 음향 4종 정의, 품질 gate, model, worker와 검증 기준 |
 | `backend/docs/voice-health-model-research.md` | HeAR/기침 detector 판정, 유사 서비스 비교, 되묻기·난청 한계와 검증 설계 |
@@ -690,3 +692,10 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   upload가 먼저 필요하다. 공인 IP만으로는 Let's Encrypt 발급이 불가능해 도메인·TLS 방식
   결정이 남았다. `scripts/seed_demo_family.py`가 통화·기준선·리포트를 만들지 않아 과거 4주
   더미 seed가 없다는 점도 함께 확인했다.
+- 2026-08-15: 클라우드 배포 설정과 사전 검증 절차 추가. `deploy/livekit.yaml`의
+  `rtc.use_external_ip: false`는 로컬 LAN 전용이며 공인 IP 뒤에서는 LiveKit이 사설 IP를 ICE
+  후보로 광고해 미디어가 연결되지 않는다. signaling은 정상이라 통화가 연결된 것처럼 보이고
+  소리만 나지 않는다. `deploy/livekit-cloud.yaml`을 분리하고 compose가
+  `LIVEKIT_CONFIG_FILE`로 고르게 했다. 절차는 `backend/docs/cloud-deploy.md`. 2026-08-18
+  가비아 배포 전에 같은 사양(2 vCPU / 4 GB)의 EC2에서 한 번 밟아 메모리 추정과 LiveKit NAT
+  통과를 실측한다.
