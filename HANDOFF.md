@@ -1,6 +1,6 @@
 # 콜록(Collog) 개발 HANDOFF
 
-마지막 갱신: 2026-08-14 (Asia/Seoul)
+마지막 갱신: 2026-08-17 (Asia/Seoul)
 
 이 문서는 콜록 개발의 단일 인수인계 기준이다. 구현, 계약, 검증 결과, 미완료 항목이 바뀌면
 코드와 같은 커밋에서 반드시 이 문서를 갱신한다. 비밀키와 실제 건강정보는 기록하지 않는다.
@@ -143,6 +143,22 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 �
 - Egress 없는 개발 환경의 부모 PCM-only 분석 mode. `ALLOW_RAW_ONLY_ANALYSIS=true`이면
   `/accept`가 Track Egress 조회·시작을 건너뛰어 부모의 LiveKit token 응답을 지연시키지 않는다.
   운영 기본값은 비활성이며, Egress 호출 0회를 보장하는 회귀 test가 있다.
+- 8주 시연용 더미 통화·건강 대화·발화 속도 기준선 seed. `services/demo_seed.py`가 서로 다른
+  ISO 주 8개를 만들어 ANCHOR(가장 이른 4주)와 ROLLING(최근 4주)을 분리하고 이번 주(W-0)를
+  포함시킨다. 실행 시점 기준 상대 날짜라 재실행 가능하고, `demo-history-*` room만 교체하므로
+  실제 통화 이력을 건드리지 않는다. `app_env=production`이면 실행을 거부한다.
+- 검증되지 않은 지표를 더미로 만들지 않는 seed 정책. 기침·휴지·F0는 생성하지 않고 실측으로
+  값이 나오는 발화 속도만 넣는다. `SPEECH_RATE` 외의 `AcousticFeature`가 생기지 않는 것을
+  test가 assert한다.
+- 리포트의 데모 데이터 표시. `containsDemoData`와 `demoDataNotice`를 snapshot에 넣어
+  클라이언트가 더미 포함 여부를 판별할 수 있다. 판정 근거는 `demo-history-` room 접두사다.
+- 리포트 `recentAcousticHistory`. 현재 기간만이 아니라 최근 5주 음향 이력을 함께 반환해
+  주간 리포트가 추세를 그릴 수 있다.
+- 리포트 상태 판정 완화. READY 기준선이 하나라도 있으면 `READY`로 본다. 이전에는 COLLECTING
+  기준선이 하나라도 있으면 전체를 `BASELINE_COLLECTING`으로 떨어뜨려, 발화 속도만 준비된
+  정상 상태에서도 리포트가 `기준선 수집 중`만 표시됐다.
+- 시스템 구성도와 운영비 산정 문서(HTML). 현재 구현 상태와 권장 운영 구성을 구분해 적었고,
+  단가는 각 업체 공식 가격표에서 확인한 값만 쓴다.
 
 ### 의도적으로 미완료
 
@@ -175,23 +191,19 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 �
 - 되묻기 탐지 재현율 미측정. `repeat-ko-v2`에서 `어` 부분 일치 오탐은 고쳤다.
 - 전체 40-case 실제 Gemini eval. provider가 처리한 7건은 7/7, 나머지 33건은 free-tier quota로
   요청 자체가 실패해 미평가다.
-- **시연용 과거 더미 데이터 seed가 없다.** `scripts/seed_demo_family.py`는 초대·가족
-  구성원·동의·프로필까지만 만들고 통화·기준선·리포트를 하나도 만들지 않는다. 서버를 새로
-  띄우고 실제 통화를 몇 번 해도 리포트는 `기준선 수집 중`만 나온다. 계획서 82행과 235행이
-  요구하는 항목이며 더미임을 UI에서 명확히 표시해야 한다. 필요한 분량은 **4주가 아니라
-  8주**다.
-  - `baseline_required_samples=4`는 통화 4건이 아니라 **서로 다른 ISO 주 4개**를 뜻한다.
-    `weekly_medians()`가 주 단위로 묶으므로 한 주에 몇 번을 통화해도 표본 1개다.
-  - ANCHOR는 가장 이른 4주, ROLLING은 최근 4주를 잡는다. 4주만 넣으면 두 기준선이 같은
-    주를 집어 `vs_anchor`와 `vs_rolling`이 동일해진다.
-  - **이번 주(W-0)도 반드시 포함해야 한다.** `SignalService.process_call()`이 현재 통화를
-    기준선에서 제외하므로, W-0이 비어 있으면 데모 당일 ROLLING이 3표본이 되어 `COLLECTING`
-    으로 떨어진다.
-  - seed는 실행 시점 기준 상대 날짜로 만들고 재실행 가능해야 한다. 절대 날짜로 한 번 넣으면
-    주가 밀려 며칠 뒤 ROLLING 창을 벗어난다. **데모 당일 아침에 다시 실행한다.**
-  - API로는 만들 수 없다. `CallCreate`에 날짜 필드가 없고 `started_at`/`observed_at`이
-    `utcnow()`로 고정된다. DB 직접 삽입이 필요하며 `Baseline`/`ChangeSignal`은 직접 만들지
-    말고 `SignalService.process_call()`을 호출해 실제 서비스 코드가 만들게 한다.
+- **8주 seed를 Compose PostgreSQL에서 실행한 기록이 없다.** `tests/test_demo_history.py`는
+  격리 SQLite에서 돌고, 실제 실행 경로는 `docker compose exec backend python -m
+  scripts.seed_demo_history`다. 8/18 배포 후 한 번 돌려 결과를 6절에 남긴다. 절차는
+  `backend/docs/two-iphone-e2e.md`에 있다.
+- **더미 데이터임을 알리는 iOS 화면이 없다.** 리포트 API는 `containsDemoData`와
+  `demoDataNotice`를 반환하지만 이를 표시하는 앱 화면이 아직 없다. 데모에서 실제 측정값처럼
+  보이지 않게 하는 것이 목적이므로 리포트 화면을 만들 때 반드시 함께 붙인다.
+- **seed는 데모 당일 아침에 다시 실행한다.** 상대 날짜로 만들지만 며칠이 지나면 가장 이른 주가
+  ROLLING 창 밖으로 밀리고 W-0이 비어 `COLLECTING`으로 떨어진다. 재실행은 `demo-history-*`만
+  교체하므로 안전하다.
+- **seed가 만드는 기준선은 `MORNING` time slot 하나뿐이다.** 데모 통화를 다른 time slot에
+  하면 그 slot에는 기준선이 없어 변화 signal이 나오지 않는다. 데모는 오전에 하거나
+  `demo_seed.py`의 `TimeSlot`을 맞춰야 한다.
 - SMS OTP 실제 발송 provider. 개발 OTP는 `000000`이다.
 - ElevenLabs 실제 key/voice ID를 `.env`에 넣어 한국어 음색을 선택하고, 실기기에서 remote MP3
   재생과 상대 수락 즉시 중단을 확인해야 한다. 생성·storage 실패 시 local TTS 폴백은 test 완료다.
@@ -275,7 +287,8 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `services/acoustics.py` | PCM loader/품질 gate/속도/휴지/pYIN F0/transient 기침 후보 분석 |
 | `services/pipeline.py` | 입력 대기→STT→LLM→음향→signal→purge orchestration |
 | `services/signals.py` | 주별 anchor/rolling 기준선, MAD 비교, 결측 주 연속 signal 계산 |
-| `services/reports.py` | 주간/월간 report와 되묻기 관찰 snapshot 생성 |
+| `services/reports.py` | 주간/월간 report, 되묻기 관찰, 최근 5주 음향 이력, 데모 데이터 표시 snapshot 생성 |
+| `services/demo_seed.py` | 8주 시연용 더미 통화·건강 대화·발화 속도 기준선 생성. `demo-history-*`만 교체하고 production 거부 |
 | `services/questions.py` | 질환별 질문 pool과 선택. TTS provider 적용 전 기본 local mode |
 | `services/domain.py` | 가족 접근, 동의, 초대 상태 공통 규칙 |
 | `services/http.py` | Deepgram/Gemini transient retry helper |
@@ -302,6 +315,8 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/docs/schema-management-design.md` | 로컬 schema guard와 배포 Alembic의 두 축, 판정 규칙, 가비아 서버 배포 제약 |
 | `backend/docs/service-proposal-outline.md` | 초기 서비스 기획안을 개조식으로 재구성하고 현재 제품·구현·검증 상태에 맞춰 정정한 문서 |
 | `output/pdf/collog-service-proposal-outline.pdf` | 팀 공유·검토용 개조식 서비스 기획안 PDF 산출물 |
+| `backend/docs/system-architecture.html` | 구성 요소·포트·통화/분석 흐름·원본 폐기 구성도. 현재 구현과 권장 운영 구성을 구분 |
+| `backend/docs/operating-cost.html` | 100가구 기준 월 운영비 산정. 공식 단가 출처, 고정비/변동비 분리, 규모별 비용과 감도 분석 |
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
@@ -309,6 +324,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/scripts/preflight_two_iphone.py` | LAN 주소/provider/APNs/MinIO의 통화 전 비밀값 없는 사전 판정 |
 | `backend/scripts/verify_two_iphone_call.py` | 최신/지정 통화의 양 Track Egress, 양 화자 STT, AI-2, purge 자동 판정 |
 | `backend/scripts/seed_demo_family.py` | 개발 OTP로 자녀-부모 초대·수락·동의·질환 프로필 생성 CLI |
+| `backend/scripts/seed_demo_history.py` | DB에 직접 접속해 8주 더미 이력을 만드는 CLI. `--parent-id`/`--child-id` 필수 |
 | `backend/scripts/replay_call.py` | Egress 없이 로컬 오디오로 STT/LLM/음향 파이프라인 실행 CLI |
 | `backend/scripts/acoustic_quality_report.py` | 음향 지표 측정 성공률과 실패 사유 분포 집계 CLI |
 | `backend/deploy/livekit-local.yaml` | Docker 없이 실행하는 단일 노드 LiveKit 설정. Egress 없음 |
@@ -318,6 +334,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/tests/test_ai_pipeline.py` | prompt/repeat/acoustic/calendar-week deterministic test |
 | `backend/tests/test_tts.py` | ElevenLabs 요청 계약, cache/서명 URL, 장애 local 폴백 test |
 | `backend/tests/test_schema_guard.py` | 스키마 판정, ADDITIVE 데이터 보존, DRIFTED 재생성, 배포 기동 거부 test |
+| `backend/tests/test_demo_history.py` | 8개 ISO 주, anchor/rolling 분리, 발화 속도만 seed, 재실행 시 중복 없음 test |
 | `backend/tests/conftest.py` | 격리 SQLite와 mock provider test app fixture |
 | `backend/pyproject.toml` | Python 의존성, ruff/pytest/build 설정 |
 | `backend/uv.lock` | 재현 가능한 dependency lock |
@@ -424,6 +441,23 @@ docker compose config --quiet
   Team/Key/Bundle ID·`.p8`는 아직 미설정이다. 이를 채우기 전 잠금화면 양단 테스트는 불가하다.
 - ElevenLabs key ID 오입력의 `400 invalid_api_key`를 확인해 provider/Team Hub/preflight가
   `sk_` 실제 key 형식을 구분하도록 보강
+
+2026-08-17 8주 더미 seed와 문서 산출물 검증 결과:
+
+- `uv run ruff check app scripts tests`: 통과
+- `uv run pytest -q`: 65 tests 통과. 파일별로 `test_ai_pipeline` 33, `test_schema_guard` 14,
+  `test_api_flow` 8, `test_providers` 6, `test_tts` 3, `test_demo_history` 1이다. 이번 변경으로
+  늘어난 것은 `test_demo_history` 1개다. warning은 기존 FastAPI TestClient deprecation 1개로
+  변동 없음
+- `docker compose config --quiet`: 통과. `LIVEKIT_CONFIG_FILE=livekit-cloud.yaml`을 준 경우도 통과
+- `tests/test_demo_history.py`는 격리 SQLite에서 8개 ISO 주, ANCHOR/ROLLING 각 4표본,
+  두 median 상이, 변화 signal 1건, 최근 5주 history, `containsDemoData=true`, 재실행 후
+  통화 8건 유지를 assert한다
+- **미검증**: Compose PostgreSQL에서의 `scripts.seed_demo_history` 실행. 8/18 배포 후에 한다
+- 운영비 문서의 단가는 2026-08-17에 Lightsail bundles 문서, Deepgram Pricing,
+  Gemini API pricing, ElevenLabs Pricing, Apple Developer 멤버십 페이지에서 직접 확인했다.
+  사용량(가구 수·통화 빈도·통화 길이)과 Gemini 토큰 수는 실측이 아닌 가정이며 문서에 그렇게
+  표시했다
 
 현재 이 Mac에는 Homebrew `docker-compose 5.4.0`, `docker-buildx 0.36.1`,
 `livekit-cli 2.18.2`가 설치되어 있고 `~/.docker/config.json`의 `cliPluginsExtraDirs`가
@@ -620,7 +654,7 @@ production을 모두 처리하며 provider 코드도 `.p8` ES256 JWT만 사용�
 | 항목 | 상태 | 근거 |
 |---|---|---|
 | schema guard | 완료 (2026-08-14) | 서버는 `SCHEMA_AUTO_RESET=false`로 뜬다 |
-| **8주 더미 seed** | 미착수 | 없으면 주간 리포트가 `기준선 수집 중`만 표시된다. 4주가 아니라 8주다. ANCHOR가 가장 이른 4주, ROLLING이 최근 4주를 잡으므로 4주만 넣으면 두 기준선이 같아진다. 이번 주(W-0)도 반드시 포함해야 한다. 데모 당일 실제 통화는 자기 자신을 기준선에서 제외하므로 W-0이 비면 ROLLING이 `COLLECTING`이 된다 |
+| **8주 더미 seed** | 완료 (2026-08-17) | `services/demo_seed.py` + `scripts/seed_demo_history.py`. 8개 ISO 주, ANCHOR/ROLLING 분리, W-0 포함, 재실행 가능. 실제 Compose PostgreSQL 실행은 8/18 배포 후에 한다. 데모 당일 아침 재실행 필요 |
 | **두 iPhone 실기기 통화** | 미완 | 2026-08-13에 한 대만 검증했고 자녀 쪽은 API로 대신했다. **핵심 시연 자체이며 가장 큰 리스크다** |
 | ElevenLabs key/voice ID | 미설정 | 없으면 iOS 로컬 TTS로 폴백돼 서버 TTS 차별점이 안 보인다 |
 | 도메인·TLS 방식 | **미결정** | 공인 IP만으로는 Let's Encrypt 발급이 안 된다. 무료 도메인+LE / ATS 예외 확대 / 자체 서명 중 선택이 필요하다 |
@@ -729,3 +763,23 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   `LIVEKIT_CONFIG_FILE`로 고르게 했다. 절차는 `backend/docs/cloud-deploy.md`. 2026-08-18
   가비아 배포 전에 같은 사양(2 vCPU / 4 GB)의 EC2에서 한 번 밟아 메모리 추정과 LiveKit NAT
   통과를 실측한다.
+- 2026-08-17: 8주 시연용 더미 seed를 구현했다. `services/demo_seed.py`가 서로 다른 ISO 주
+  8개를 만들어 ANCHOR(가장 이른 4주)와 ROLLING(최근 4주)을 분리하고 이번 주(W-0)를 포함한다.
+  API로는 만들 수 없어(`started_at`/`observed_at`이 `utcnow()` 고정) DB에 직접 삽입하지만
+  `Baseline`/`ChangeSignal`은 직접 만들지 않고 `SignalService.process_call()`을 호출해 실제
+  서비스 코드가 만들게 한다. 검증되지 않은 기침·휴지·F0는 생성하지 않고 발화 속도만 넣는다.
+  실행 CLI는 `scripts/seed_demo_history.py`이며 `demo-history-*` room만 교체한다.
+- 2026-08-17: 리포트 상태 판정을 "COLLECTING 기준선이 하나라도 있으면 전체 미준비"에서
+  "READY 기준선이 하나라도 있으면 READY"로 바꿨다. 음향 4종 중 발화 속도만 값이 나오는 현재
+  상태에서 이전 규칙은 정상 데이터에서도 리포트를 영구히 `기준선 수집 중`으로 묶었다.
+  함께 `recentAcousticHistory`(최근 5주)와 `containsDemoData`/`demoDataNotice`를 추가했다.
+- 2026-08-17: 리포트 저장 실패 잠재 버그를 수정했다. 변화 signal의 `observedAt`이 datetime
+  이라 `Report.snapshot` JSON 직렬화에서 깨질 수 있었다. `jsonable_encoder`를 snapshot 전체에
+  적용했다. 이전에는 변화 signal이 실제로 생기는 경우가 없어 드러나지 않았고, 8주 seed가
+  signal을 만들면서 재현됐다.
+- 2026-08-17: 시스템 구성도(`backend/docs/system-architecture.html`)와 운영비 산정
+  (`backend/docs/operating-cost.html`)을 추가했다. 구성도는 Caddy/TLS가 아직 없다는 점,
+  MinIO 9000이 iOS에 직접 노출된다는 점, UDP 7882는 프록시 대상이 아니라는 점을 현재 구현과
+  권장 구성으로 나눠 적었다. 운영비는 100가구 월 약 $107(예비비 20% 포함), 가구당 약 $1.07로
+  산정했고 변동비의 94%가 Deepgram STT다. 비용을 줄이려면 모델 선택이 아니라 전사 분량을
+  건드려야 한다는 결론이다.

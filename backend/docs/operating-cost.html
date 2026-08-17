@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>콜록(Collog) 운영비 산정</title>
+<style>
+  :root {
+    --ink: #16181d;
+    --muted: #5d6470;
+    --line: #d5d9e0;
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --warn: #8a4b00;
+    --warn-bg: #fdf0df;
+    --fixed: #2c4a8a;
+    --var: #0f6b3f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 20px 72px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+      "Noto Sans KR", "Malgun Gothic", sans-serif;
+  }
+  main { max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h2 {
+    font-size: 19px; margin: 44px 0 12px; padding-bottom: 8px;
+    border-bottom: 2px solid var(--ink); letter-spacing: -0.01em;
+  }
+  h3 { font-size: 15px; margin: 26px 0 8px; }
+  p { margin: 0 0 12px; }
+  .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+  .note {
+    background: var(--card); border: 1px solid var(--line);
+    border-left: 4px solid var(--warn); padding: 12px 16px; margin: 16px 0;
+    font-size: 14px;
+  }
+  .note strong { color: var(--warn); }
+  table {
+    width: 100%; border-collapse: collapse; background: var(--card);
+    border: 1px solid var(--line); font-size: 13.5px; margin: 0 0 12px;
+  }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: #eef0f4; font-weight: 700; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  tr.total td { font-weight: 700; background: #eef0f4; }
+  tr.subtotal td { font-weight: 700; background: #f7f8fa; color: var(--ink); }
+  .tag {
+    display: inline-block; padding: 1px 7px; border-radius: 10px;
+    font-size: 11px; font-weight: 700; color: #fff;
+  }
+  .t-fixed { background: var(--fixed); }
+  .t-var { background: var(--var); }
+  pre {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; font-size: 12.5px; line-height: 1.55;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    margin: 0 0 12px;
+  }
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px; background: #eef0f4; padding: 1px 5px; border-radius: 3px;
+  }
+  a { color: #2c4a8a; }
+  footer { margin-top: 48px; padding-top: 14px; border-top: 1px solid var(--line);
+           color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>콜록(Collog) 운영비 산정</h1>
+<p class="sub">
+  기준일 2026-08-17 &middot; 통화 100가구 &middot; 모든 단가는 공식 가격표를 직접 확인한 값이다
+</p>
+
+<div class="note">
+  <strong>이 문서에서 "가정"과 "확인된 단가"는 다른 것이다.</strong>
+  단가(§1)는 각 업체 공식 가격표에서 확인했다. 사용량(§2)은 우리가 정한 가정이며 실측이
+  아니다. 특히 Gemini 출력 토큰 수는 측정하지 않았으므로 §4에서 범위로 제시한다.
+  숫자 하나를 단정하지 않는다.
+</div>
+
+<h2>1. 확인된 공식 단가</h2>
+
+<table>
+  <tr><th>항목</th><th>단가</th><th>확인 내용</th><th>출처</th></tr>
+  <tr>
+    <td>AWS Lightsail<br>Medium-4GB Linux (public IPv4)</td>
+    <td class="num">$24.00 / 월</td>
+    <td>2 vCPU / 4 GB / 80 GB SSD / 4 TB 전송. 가비아 2 vCore·4 GB와 같은 급.
+      IPv6 전용은 $20.00이지만 iOS 클라이언트가 IPv4로 붙으므로 쓸 수 없다</td>
+    <td><a href="https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-bundles.html">Lightsail instance bundles</a></td>
+  </tr>
+  <tr>
+    <td>Lightsail 스냅샷</td>
+    <td class="num">$0.05 / GB&middot;월</td>
+    <td>인스턴스 스냅샷 요금</td>
+    <td><a href="https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-faq-snapshots.html">Lightsail snapshot FAQ</a></td>
+  </tr>
+  <tr>
+    <td>Deepgram Nova-3 Monolingual<br>pre-recorded, Pay As You Go</td>
+    <td class="num">$0.0048 / 분</td>
+    <td>같은 모델 streaming은 $0.0077/분. <strong>우리는 통화 종료 후 Egress OGG를 배치로
+      보내므로 pre-recorded 요율이 맞다.</strong> Growth 연간 선불이면 $0.0042/분</td>
+    <td><a href="https://deepgram.com/pricing">Deepgram Pricing</a></td>
+  </tr>
+  <tr>
+    <td>Deepgram Speaker Diarization 애드온</td>
+    <td class="num">$0.0020 / 분</td>
+    <td><strong>쓰지 않는다.</strong> Track Egress가 화자별 트랙을 이미 분리하므로 불필요.
+      100가구 기준 월 $19.20을 안 쓰는 것이다</td>
+    <td><a href="https://deepgram.com/pricing">Deepgram Pricing</a></td>
+  </tr>
+  <tr>
+    <td>Gemini 3.6 Flash (현재 기본값)<br>Standard, 유료 tier</td>
+    <td class="num">입력 $0.75 / 1M<br>출력 $3.75 / 1M</td>
+    <td>2026-12-31까지의 가격이며 2027-01-01부터 입력 $1.50 / 출력 $7.50으로 2배가 된다.
+      <strong>출력 가격에 thinking 토큰이 포함된다</strong></td>
+    <td><a href="https://ai.google.dev/gemini-api/docs/pricing">Gemini API pricing</a></td>
+  </tr>
+  <tr>
+    <td>Gemini 3.5 Flash-Lite (비용 대안)<br>Standard, 유료 tier</td>
+    <td class="num">입력 $0.30 / 1M<br>출력 $2.50 / 1M</td>
+    <td>가장 저렴한 GA 모델. 구조화 추출 품질은 우리 40-case suite로 다시 재야 한다</td>
+    <td><a href="https://ai.google.dev/gemini-api/docs/pricing">Gemini API pricing</a></td>
+  </tr>
+  <tr>
+    <td>Gemini Batch API</td>
+    <td class="num">Standard의 50%</td>
+    <td>3.6 Flash 기준 입력 $0.375 / 출력 $1.875. 통화 후 분석은 실시간이 아니므로
+      <strong>적용 가능한 최적화다.</strong> 다만 현재 코드는 동기 호출이다</td>
+    <td><a href="https://ai.google.dev/gemini-api/docs/pricing">Gemini API pricing</a></td>
+  </tr>
+  <tr>
+    <td>ElevenLabs</td>
+    <td class="num">Free $0 / 10k credits<br>Starter $6 / 30k<br>Creator $22 / 121k</td>
+    <td>Text to Speech는 1 문자 = 1 credit(Flash v2.5 API는 0.5~1). 연간 결제 시 Starter는
+      월 $5 환산</td>
+    <td><a href="https://elevenlabs.io/pricing">ElevenLabs Pricing</a></td>
+  </tr>
+  <tr>
+    <td>Apple Developer Program</td>
+    <td class="num">$99 / 년 = $8.25 / 월</td>
+    <td>APNs 키 발급과 실기기 배포에 필수</td>
+    <td><a href="https://developer.apple.com/support/compare-memberships/">Apple Developer 멤버십</a></td>
+  </tr>
+</table>
+
+<div class="note">
+  <strong>Gemini 무료 tier는 비용 항목으로 쓸 수 없다.</strong> 무료 tier는 입출력 토큰이 무료지만
+  요청 내용이 <em>제품 개선에 사용</em>된다. 실제 사용자 건강정보를 다루는 순간 유료 tier가
+  전제 조건이다. 지금 무료 tier로 개발하는 것은 해커톤 더미 데이터만 보내기 때문이며,
+  이 문서의 모든 Gemini 금액은 유료 tier 단가다. 참고로 무료 tier의 quota 제한 때문에 40-case
+  eval 중 33건이 요청 자체에 실패한 이력이 있다.
+</div>
+
+<h2>2. 사용량 가정</h2>
+
+<table>
+  <tr><th>변수</th><th class="num">값</th><th>근거와 위험</th></tr>
+  <tr><td>가구 수</td><td class="num">100</td><td>산정 기준으로 정한 값</td></tr>
+  <tr><td>가구당 월 통화 수</td><td class="num">4</td><td>주 1회. 실사용 빈도는 측정 전이다</td></tr>
+  <tr><td>통화 길이</td><td class="num">12분</td>
+      <td>실측 통합 smoke는 자녀 30.4초 / 부모 42.4초였다. 12분은 실제 가족 통화 가정이다</td></tr>
+  <tr><td>STT 대상 트랙</td><td class="num">2</td>
+      <td>양 참여자를 각자 건강 subject로 분석하는 확정 방향. <strong>비용이 2배가 되는 지점</strong></td></tr>
+  <tr><td>Gemini 요청 수 / 통화</td><td class="num">1</td>
+      <td>현재 코드는 부모-only 추출이라 통화당 1건. 양 참여자 추출로 가면 2건이 된다</td></tr>
+  <tr><td>Gemini 입력 토큰 / 요청</td><td class="num">3,000</td>
+      <td>prompt v2 + 부모 발화 전사 가정. 미실측</td></tr>
+  <tr><td>Gemini 출력 토큰 / 요청</td><td class="num">400 ~ 2,048</td>
+      <td><strong>미실측.</strong> thinking 토큰이 출력 예산을 함께 쓴다. 500으로 두었을 때 짧은
+        JSON도 <code>MAX_TOKENS</code>로 잘려서 <code>GEMINI_MAX_OUTPUT_TOKENS=2048</code>이
+        기본값이다. 2,048이 상한, 400이 순수 JSON 하한</td></tr>
+  <tr><td>스냅샷 용량</td><td class="num">20 GB</td><td>80 GB 디스크의 사용분 가정</td></tr>
+</table>
+
+<pre>
+총 통화 수   = 100가구 x 4회            = 400건 / 월
+STT 처리량   = 400건 x 12분 x 2트랙     = 9,600분 / 월
+Gemini 요청  = 400건 x 1                = 400건 / 월
+</pre>
+
+<h2>3. 월 운영비 &mdash; 100가구 기준</h2>
+
+<p>
+  현재 설정(<code>GEMINI_MODEL=gemini-3.6-flash</code>, 부모-only 추출) 기준이다.
+  Gemini 열은 출력 토큰 1,200 가정값이며 범위는 §4에 있다.
+</p>
+
+<table>
+  <tr><th>항목</th><th>구분</th><th class="num">월 비용</th><th>계산</th></tr>
+  <tr><td>Lightsail Medium-4GB (public IPv4)</td><td><span class="tag t-fixed">고정</span></td>
+      <td class="num">$24.00</td><td>정액</td></tr>
+  <tr><td>Lightsail 스냅샷</td><td><span class="tag t-fixed">고정</span></td>
+      <td class="num">$1.00</td><td>20 GB &times; $0.05</td></tr>
+  <tr><td>ElevenLabs Starter</td><td><span class="tag t-fixed">고정</span></td>
+      <td class="num">$6.00</td><td>플랜 정액. 실사용 credit은 §5 참조</td></tr>
+  <tr><td>도메인 + DNS</td><td><span class="tag t-fixed">고정</span></td>
+      <td class="num">$1.50</td><td>$1~2 범위의 중간. 방식 미결정</td></tr>
+  <tr><td>Apple Developer 연회비 월할</td><td><span class="tag t-fixed">고정</span></td>
+      <td class="num">$8.25</td><td>$99 &divide; 12</td></tr>
+  <tr class="subtotal"><td>고정비 소계</td><td></td><td class="num">$40.75</td>
+      <td>가구 수와 무관하다</td></tr>
+  <tr><td>Deepgram Nova-3 STT</td><td><span class="tag t-var">변동</span></td>
+      <td class="num">$46.08</td><td>9,600분 &times; $0.0048</td></tr>
+  <tr><td>Gemini 3.6 Flash 구조화</td><td><span class="tag t-var">변동</span></td>
+      <td class="num">$2.70</td>
+      <td>400 &times; (3,000&divide;1M&times;$0.75 + 1,200&divide;1M&times;$3.75)</td></tr>
+  <tr class="subtotal"><td>변동비 소계</td><td></td><td class="num">$48.78</td>
+      <td>가구 수에 비례한다</td></tr>
+  <tr class="subtotal"><td>소계</td><td></td><td class="num">$89.53</td><td></td></tr>
+  <tr><td>장애 &middot; 사용량 초과 예비비 20%</td><td></td><td class="num">$17.91</td>
+      <td>재분석 재시도, 통화 길이 초과, 스냅샷 증가</td></tr>
+  <tr class="total"><td>합계</td><td></td><td class="num">$107.44</td>
+      <td>가구당 <strong>$1.07 / 월</strong></td></tr>
+</table>
+
+<pre>
+Deepgram = 가구 수 x 월 통화 수 x 통화 분 x 트랙 수 x $0.0048
+         = 100 x 4 x 12 x 2 x 0.0048
+         = $46.08
+
+Gemini   = 요청 수 x (입력 토큰 / 1,000,000 x 입력 단가
+                    + 출력 토큰 / 1,000,000 x 출력 단가)
+         = 400 x (3,000 / 1,000,000 x 0.75 + 1,200 / 1,000,000 x 3.75)
+         = 400 x (0.00225 + 0.00450)
+         = $2.70
+</pre>
+
+<div class="note">
+  <strong>Deepgram이 전체의 절반이다.</strong> 변동비 $48.78 중 $46.08, 즉 94%가 STT다.
+  운영비를 줄이려면 Gemini 모델을 바꾸는 것이 아니라 <em>무엇을 몇 분 전사하는가</em>를
+  건드려야 한다. 예: 발화 20초 미만 제외를 이미 하고 있고, 무음 구간을 잘라 보내면 실제 과금
+  분이 줄어든다.
+</div>
+
+<h2>4. Gemini 감도 분석</h2>
+
+<p>출력 토큰과 모델 선택에 따른 월 Gemini 비용이다. 나머지 항목은 변하지 않는다.</p>
+
+<table>
+  <tr>
+    <th rowspan="2">모델</th>
+    <th colspan="3" class="num">부모-only 400 요청 (현재 코드)</th>
+    <th colspan="3" class="num">양 참여자 800 요청 (확정 방향)</th>
+  </tr>
+  <tr>
+    <th class="num">출력 400</th><th class="num">출력 1,200</th><th class="num">출력 2,048</th>
+    <th class="num">출력 400</th><th class="num">출력 1,200</th><th class="num">출력 2,048</th>
+  </tr>
+  <tr>
+    <td><code>gemini-3.6-flash</code> (현재 기본값)</td>
+    <td class="num">$1.50</td><td class="num">$2.70</td><td class="num">$3.97</td>
+    <td class="num">$3.00</td><td class="num">$5.40</td><td class="num">$7.94</td>
+  </tr>
+  <tr>
+    <td><code>gemini-3.5-flash-lite</code></td>
+    <td class="num">$0.76</td><td class="num">$1.56</td><td class="num">$2.41</td>
+    <td class="num">$1.52</td><td class="num">$3.12</td><td class="num">$4.82</td>
+  </tr>
+</table>
+
+<p>
+  최악(3.6 Flash / 출력 2,048 / 양 참여자) $7.94와 최선(Flash-Lite / 출력 400 / 부모-only)
+  $0.76의 차이는 월 $7.18이다. <strong>전체 합계 $107 대비 7% 미만이므로 Gemini 모델 선택은
+  비용 문제가 아니라 추출 품질 문제로 다뤄야 한다.</strong> 2027-01-01 이후 3.6 Flash 단가가
+  2배가 되어도 최악값이 $15.89이며 여전히 Deepgram의 3분의 1이다.
+</p>
+
+<h2>5. ElevenLabs 실사용량 &mdash; 플랜 정액이 지배한다</h2>
+
+<p>
+  질문 MP3는 <code>질문 ID + voice + model + format + text hash</code>로 캐시한다. 질문 pool은
+  질환별 11개 + 기본 3개로 <strong>총 14개 고정 문장</strong>이고 각 20자 안팎이다.
+</p>
+
+<pre>
+1회성 생성량 = 14문장 x 약 20자 = 약 280 credits (voice/model 변경 시에만 재생성)
+Free 플랜 월 한도 10,000 credits의 약 3%
+</pre>
+
+<p>
+  즉 사용량 기준으로는 Free 플랜으로도 충분하다. Starter $6을 넣는 이유는 credit이 아니라
+  <strong>상업적 이용 라이선스</strong>다. 질문 pool이 동적 생성(anchor + dynamic 질문 정책,
+  Phase 3)으로 바뀌면 이 항목은 고정비에서 변동비로 성격이 바뀌므로 그때 다시 계산한다.
+</p>
+
+<h2>6. 규모별 비용</h2>
+
+<table>
+  <tr><th>가구</th><th class="num">월 통화</th><th class="num">STT 분</th>
+      <th class="num">고정비</th><th class="num">변동비</th><th class="num">합계</th>
+      <th class="num">가구당</th></tr>
+  <tr><td>10</td><td class="num">40</td><td class="num">960</td>
+      <td class="num">$40.75</td><td class="num">$4.88</td><td class="num">$45.63</td>
+      <td class="num">$4.56</td></tr>
+  <tr><td>100</td><td class="num">400</td><td class="num">9,600</td>
+      <td class="num">$40.75</td><td class="num">$48.78</td><td class="num">$89.53</td>
+      <td class="num">$0.90</td></tr>
+  <tr><td>1,000</td><td class="num">4,000</td><td class="num">96,000</td>
+      <td class="num">$40.75</td><td class="num">$487.80</td><td class="num">$528.55</td>
+      <td class="num">$0.53</td></tr>
+  <tr><td>10,000</td><td class="num">40,000</td><td class="num">960,000</td>
+      <td class="num">$40.75</td><td class="num">$4,878.00</td><td class="num">$4,918.75</td>
+      <td class="num">$0.49</td></tr>
+</table>
+
+<p>한 통화의 한계비용은 규모와 무관하게 고정이다.</p>
+
+<pre>
+통화 1건 한계비용 = Deepgram 12분 x 2트랙 x $0.0048   = $0.1152
+                  + Gemini 1요청 (입력 3,000 / 출력 1,200) = $0.0068
+                  ------------------------------------------------
+                                                        = 약 $0.122
+가구 1곳의 월 한계비용 = 4건 x $0.122 = 약 $0.49
+</pre>
+
+<div class="note">
+  <strong>이 표는 변동비만 선형으로 늘린 것이며 인프라 사이징은 모델에 없다.</strong>
+  1,000가구 이상에서 고정비 $40.75가 그대로 유지될 수는 없다. 비용을 결정하는 것은 월 통화
+  총량이 아니라 <em>동시 통화 수</em>이며, LiveKit SFU와 Egress는 동시성에 비례해 CPU와 메모리를
+  쓴다. 4 GB 단일 인스턴스가 몇 통화를 동시에 버티는지는 아직 측정하지 않았다. 그 수치가 나오기
+  전까지 1,000가구 이상 행은 <strong>변동비 하한</strong>으로만 읽어야 한다.
+</div>
+
+<h2>7. 네트워크 전송량 점검</h2>
+
+<p>
+  Lightsail Medium-4GB의 전송 허용량은 월 4 TB다. Opus 비트레이트는 실측하지 않았으므로
+  범위로 계산한다. 서버 outbound는 SFU가 각 참가자에게 상대 트랙을 1개씩 보내는 양과,
+  Egress OGG를 Deepgram에 업로드하는 양의 합으로 잡았다.
+</p>
+
+<table>
+  <tr><th>Opus 비트레이트 (가정)</th><th class="num">트랙당 12분</th>
+      <th class="num">통화당 서버 outbound</th><th class="num">월 400통화</th>
+      <th class="num">4 TB 대비</th></tr>
+  <tr><td>24 kbps</td><td class="num">2.16 MB</td><td class="num">8.64 MB</td>
+      <td class="num">3.46 GB</td><td class="num">0.09%</td></tr>
+  <tr><td>32 kbps</td><td class="num">2.88 MB</td><td class="num">11.52 MB</td>
+      <td class="num">4.61 GB</td><td class="num">0.12%</td></tr>
+  <tr><td>48 kbps</td><td class="num">4.32 MB</td><td class="num">17.28 MB</td>
+      <td class="num">6.91 GB</td><td class="num">0.17%</td></tr>
+</table>
+
+<p>
+  최악 가정에서도 허용량의 0.2% 미만이다. <strong>전송량은 이 서비스의 비용 요인이 아니다.</strong>
+  10,000가구로 늘려도 약 690 GB로 4 TB 안에 들어간다. 다만 iOS 분석용 PCM은 비압축
+  48 kHz mono int16이라 12분에 약 69 MB이며, 이것은 <em>인바운드</em>이므로 Lightsail 전송
+  허용량 계산에서 빠진다. 아웃바운드만 과금 대상이라는 전제이며 실제 청구서로 확인해야 한다.
+</p>
+
+<h2>8. 비용에 넣지 않은 것</h2>
+
+<table>
+  <tr><th>항목</th><th>왜 제외했는가</th></tr>
+  <tr><td>SMS OTP 발송</td>
+      <td>실제 provider가 아직 없다. 개발 OTP는 <code>000000</code>이다.
+        도입하면 가입/로그인 건당 변동비가 새로 생긴다</td></tr>
+  <tr><td>HeAR 기침 detector 추론</td>
+      <td>같은 인스턴스에서 ONNX로 돌고 clip당 약 3 ms라 별도 과금이 없다.
+        게다가 <code>cough_detector_validated=false</code>로 꺼져 있다</td></tr>
+  <tr><td>librosa pYIN F0 분석</td>
+      <td>인스턴스 CPU에서 처리한다. 외부 과금 없음. 다만 4 GB / 2 vCPU에서 동시 분석이
+        몇 건까지 되는지는 미측정이다</td></tr>
+  <tr><td>PostgreSQL / Redis / MinIO</td>
+      <td>모두 self-hosted라 인스턴스 비용에 포함된다. 관리형으로 옮기면 별도 항목이 된다</td></tr>
+  <tr><td>모니터링 &middot; 로그 수집</td>
+      <td>현재 <code>docker compose logs</code>뿐이다. 실서비스에서는 별도 비용이 생긴다</td></tr>
+  <tr><td>가비아 클라우드 (2026-08-18 ~ 08-28)</td>
+      <td>해커톤 지원분이라 우리 비용이 아니다. 이 문서는 지원 종료 후 자체 운영 기준이다</td></tr>
+  <tr><td>백업 보존과 이중화</td>
+      <td>스냅샷 1개만 잡았다. 실서비스 RPO/RTO 목표를 정하면 늘어난다</td></tr>
+  <tr><td>인건비</td><td>인프라 비용만 다루는 문서다</td></tr>
+</table>
+
+<h2>9. 비용을 줄일 수 있는 순서</h2>
+
+<table>
+  <tr><th>#</th><th>수단</th><th class="num">100가구 절감</th><th>비고</th></tr>
+  <tr><td>1</td><td>전사 대상 오디오를 무음 제거 후 보내기</td>
+      <td class="num">STT의 몇십 %</td>
+      <td>가장 큰 항목을 직접 줄인다. 다만 word timing 기반 휴지·발화 속도 계산이
+        영향을 받으므로 지표 정의와 함께 결정해야 한다</td></tr>
+  <tr><td>2</td><td>Deepgram Growth 연간 선불</td><td class="num">$5.76</td>
+      <td>$0.0048 &rarr; $0.0042/분. 연 $4,000+ 선불 조건이라 100가구 규모에는 맞지 않는다.
+        1,000가구부터 의미가 있다</td></tr>
+  <tr><td>3</td><td>Gemini Batch API 전환</td><td class="num">$1.35</td>
+      <td>통화 후 분석은 실시간이 아니므로 적용 가능하다. 현재 코드는 동기 호출이라
+        파이프라인 수정이 필요하다</td></tr>
+  <tr><td>4</td><td>Gemini Flash-Lite 전환</td><td class="num">$1.14</td>
+      <td>40-case eval을 다시 통과해야 한다. 절감액이 작아 품질 위험을 감수할 이유가 약하다</td></tr>
+  <tr><td>5</td><td>ElevenLabs Free 유지</td><td class="num">$6.00</td>
+      <td>사용량으로는 가능하지만 상업적 이용 라이선스가 없어진다. 서비스에는 못 쓴다</td></tr>
+  <tr><td>&mdash;</td><td>Lightsail IPv6 전용 인스턴스</td><td class="num">$4.00</td>
+      <td><strong>불가.</strong> iOS 클라이언트와 외부 API가 IPv4를 쓴다</td></tr>
+</table>
+
+<p>
+  1번을 빼면 나머지를 다 합쳐도 월 $15 남짓이다. <strong>구조를 바꾸지 않는 최적화로는
+  이 서비스의 운영비를 의미 있게 낮출 수 없다.</strong> 비용의 형태는 "가구당 월 $0.49의 변동비
+  + 규모와 무관한 월 $41의 고정비"이고, 100가구 규모에서는 고정비 비중이 46%라 가입 가구를
+  늘리는 것이 단위 비용을 낮추는 가장 빠른 방법이다.
+</p>
+
+<h2>10. 재계산 방법</h2>
+
+<pre>
+families      = 가구 수
+calls         = families x 월 통화 수
+stt_minutes   = calls x 통화 분 x 트랙 수
+gemini_reqs   = calls x (참여자 1명당 추출이면 2, 부모-only면 1)
+
+variable = stt_minutes x 0.0048
+         + gemini_reqs x (in_tokens/1e6 x 0.75 + out_tokens/1e6 x 3.75)
+
+fixed    = 24.00   Lightsail Medium-4GB
+         +  1.00   스냅샷 20GB
+         +  6.00   ElevenLabs Starter
+         +  1.50   도메인 + DNS
+         +  8.25   Apple Developer
+
+total    = (fixed + variable) x 1.20      # 예비비 20%
+</pre>
+
+<footer>
+  이 문서는 <code>HANDOFF.md</code>의 하위 문서다. 단가나 사용량 가정이 바뀌면 코드와 같은
+  커밋에서 이 파일과 <code>HANDOFF.md</code>를 함께 갱신한다. 단가는 2026-08-17에 각 업체
+  공식 가격표에서 직접 확인한 값이며, 사용량과 토큰 수 가정은 실측이 아니다.
+  구성 요소는 <code>backend/docs/system-architecture.html</code>,
+  배포 절차는 <code>backend/docs/cloud-deploy.md</code>를 참조한다.
+</footer>
+
+</main>
+</body>
+</html>

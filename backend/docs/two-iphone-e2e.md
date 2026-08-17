@@ -132,6 +132,19 @@ uv run python -m scripts.seed_demo_family \
 
 개발 OTP는 `000000`이다. 실데이터 대신 위 더미 계정을 사용한다.
 
+가족 seed 출력의 `parentUserId`, `childUserId`를 사용해 주간 리포트에 필요한 8개 ISO 주의
+시연용 통화도 만든다. 이 명령은 DB에 직접 접근하므로 Compose에서는 backend 컨테이너 안에서
+실행한다. 재실행하면 이전 `demo-history-*` 통화만 교체한다.
+
+```bash
+docker compose exec backend python -m scripts.seed_demo_history \
+  --parent-id <parentUserId> \
+  --child-id <childUserId>
+```
+
+기침·휴지·F0는 검증된 값처럼 꾸미지 않고, 실제 파이프라인에서 동작한 발화 속도만 넣는다.
+리포트 응답에는 `containsDemoData=true`와 안내 문구가 포함된다.
+
 ## 5. 두 iPhone 설치와 로그인
 
 1. Xcode에서 `ios/Collog.xcodeproj`를 열고 Team, Bundle Identifier, signing을 설정한다.

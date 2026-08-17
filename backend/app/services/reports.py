@@ -4,6 +4,7 @@ import calendar
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +18,8 @@ from app.models import (
     Report,
 )
 from app.services.signals import signal_to_dict
+
+DEMO_ROOM_PREFIX = "demo-history-"
 
 DISCLAIMER = "이 리포트는 의료 진단이 아니며 건강 변화 참고용입니다."
 ADVISORY = "변화가 지속되거나 불편함이 있으면 의료진과 상담해보세요."
@@ -96,12 +99,12 @@ class ReportService:
                     select(RepeatEvent).where(RepeatEvent.call_id.in_(analyzed_ids))
                 )
             )
-        collecting = await session.scalar(
+        ready_baseline = await session.scalar(
             select(Baseline)
-            .where(Baseline.parent_id == parent_id, Baseline.status == "COLLECTING")
+            .where(Baseline.parent_id == parent_id, Baseline.status == "READY")
             .limit(1)
         )
-        state = "EMPTY" if not calls else "BASELINE_COLLECTING" if collecting else "READY"
+        state = "EMPTY" if not calls else "READY" if ready_baseline else "BASELINE_COLLECTING"
         conversation_items = {
             field: [value for row in extractions if (value := getattr(row, field))]
             for field in ("symptom", "medication", "activity", "sleep")
@@ -111,10 +114,36 @@ class ReportService:
             trends.setdefault(feature.metric, []).append(
                 {"date": feature.observed_at.date().isoformat(), "value": feature.value}
             )
+
+        history_from = start_dt - timedelta(weeks=4)
+        history_rows = (
+            await session.execute(
+                select(AcousticFeature, CallRecord)
+                .join(CallRecord, CallRecord.id == AcousticFeature.call_id)
+                .where(
+                    CallRecord.parent_id == parent_id,
+                    CallRecord.state == "ANALYZED",
+                    AcousticFeature.status == "OK",
+                    AcousticFeature.observed_at >= history_from,
+                    AcousticFeature.observed_at < end_dt,
+                )
+                .order_by(AcousticFeature.observed_at)
+            )
+        ).all()
+        recent_history: dict[str, list[dict[str, Any]]] = {}
+        for feature, call in history_rows:
+            recent_history.setdefault(feature.metric, []).append(
+                {
+                    "callId": call.id,
+                    "date": feature.observed_at.date().isoformat(),
+                    "value": feature.value,
+                    "unit": feature.unit,
+                }
+            )
         promoted = [signal_to_dict(item) for item in signals if item.promoted]
         acute = [signal_to_dict(item) for item in signals if item.acute]
         issued_at = datetime.now(UTC)
-        snapshot = {
+        snapshot = jsonable_encoder({
             "parentId": parent_id,
             "period": period,
             "from": from_date.isoformat(),
@@ -135,8 +164,20 @@ class ReportService:
             "acousticTrends": [
                 {"metric": metric, "points": points} for metric, points in trends.items()
             ],
+            "recentAcousticHistory": [
+                {"metric": metric, "points": points}
+                for metric, points in recent_history.items()
+            ],
             "analyzedCallCount": len(analyzed_ids),
-        }
+            "containsDemoData": any(
+                call.room_name.startswith(DEMO_ROOM_PREFIX) for call in calls
+            ),
+            "demoDataNotice": (
+                "시연용으로 생성된 더미 통화와 건강정보가 포함되어 있습니다."
+                if any(call.room_name.startswith(DEMO_ROOM_PREFIX) for call in calls)
+                else None
+            ),
+        })
         session.add(
             Report(
                 parent_id=parent_id,
