@@ -324,8 +324,8 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/docs/service-proposal-outline.md` | 초기 서비스 기획안을 개조식으로 재구성하고 현재 제품·구현·검증 상태에 맞춰 정정한 문서 |
 | `output/pdf/collog-service-proposal-outline.pdf` | 팀 공유·검토용 개조식 서비스 기획안 PDF 산출물 |
 | `backend/docs/system-architecture.html` | 구성 요소·포트·통화/분석 흐름·원본 폐기 구성도. 현재 구현과 권장 운영 구성을 구분 |
-| `backend/docs/operating-cost.html` | 100가구 기준 월 운영비 산정. 공식 단가 출처, 고정비/변동비 분리, 규모별 비용과 감도 분석 |
-| `output/html/collog-operating-cost.html` | 팀 공유·검토용 운영비 시각화. 위 산정 문서와 같은 숫자를 SVG 차트와 원화 병기로 정리. 외부 asset 없이 단독 실행 |
+| `backend/docs/operating-cost.html` | 운영비 산정 정본. 공식 단가와 출처, Deepgram 과금 구조·무료 크레딧·계정 정책, 규모별 provider 내역, 감도 분석, 계산식 |
+| `output/html/collog-operating-cost.html` | 팀 공유·검토용 결론 문서. 규모별 provider 비용표를 맨 앞에 두고 무료 크레딧·계정 질문·주의사항만 남긴 축약본. 외부 asset 없이 단독 실행 |
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
@@ -818,3 +818,20 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   발견했다. `services/deepgram.py`가 `mip_opt_out`을 보내지 않아 실제 건강정보를 보내는 순간
   학습 데이터 이용에 동의한 상태가 된다. opt-out 요율이 공개되지 않아 비용 영향을 계산할 수
   없으므로 코드는 바꾸지 않고 7절 불변조건과 3절 미완료에 결정 사항으로 기록했다.
+- 2026-08-17: 운영비 문서 두 개의 역할을 분리하고 시각화 문서를 다시 썼다. 이전 버전은
+  "월 총액 → 구성비 → 감도 → 절감"을 다 담아 정작 자주 묻는 것(어느 provider가 규모별로
+  얼마인가)이 표 하나에 안 보였다. `output/html/`은 **규모별 provider 비용표를 첫 화면에**
+  두고 무료 크레딧, 계정 재발급 여부, 무효 조건만 남긴 6개 절로 줄였다. 감도 분석·전송량
+  점검·절감 수단은 `backend/docs/operating-cost.html`에만 둔다.
+- 2026-08-17: 두 문서에 규모별 provider 내역(10 / 100 / 1,000 / 10,000가구)과 무료 크레딧
+  소진 기간을 추가했다. Deepgram 비중은 100가구 84%, 1,000가구 이상 94%다. $200 크레딧은
+  우리 요율로 694시간이고 100가구 기준 4.3개월, 1,000가구면 13일이면 끝난다. 100가구 첫 달
+  실지출은 $32.70이다.
+- 2026-08-17: 무료 크레딧을 계정마다 다시 받는 방식이 성립하지 않음을 약관으로 확인해
+  기록했다. 무료 크레딧은 조직 내 계정 간에도 이전 불가이고, ToS 5-6절이 프로모션 자격 판정에
+  device ID·결제수단·이메일을 쓸 수 있다고 명시하며, 2-4-(13)절이 사용 제한 우회를 금지한다.
+  백엔드가 API 키 하나로 도는 구조라 기술적으로도 합칠 수 없다.
+- 2026-08-17: ToS 3-5-(4)절을 확인해 **BAA 없이 HIPAA상 PHI를 Deepgram에 보내면 약관 위반**
+  임을 문서에 남겼다. BAA는 Enterprise 고객에게만 제공된다. 한국 서비스에 HIPAA가 직접
+  적용되는지는 법무 판단이 필요하지만, 미국 사용자를 받으면 공개 단가가 아니라 Enterprise
+  협상가가 되므로 운영비 모델 자체가 달라진다.

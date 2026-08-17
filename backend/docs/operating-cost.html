@@ -203,6 +203,53 @@
   §4의 월 $46.08은 무료 크레딧을 다 쓴 이후의 정상 요금이다.
 </p>
 
+<table>
+  <tr><th>가구</th><th class="num">월 STT 분</th><th class="num">$200 소진까지</th></tr>
+  <tr><td>10</td><td class="num">960</td><td class="num">43.4개월</td></tr>
+  <tr><td>100</td><td class="num">9,600</td><td class="num">4.3개월</td></tr>
+  <tr><td>1,000</td><td class="num">96,000</td><td class="num">13일</td></tr>
+  <tr><td>10,000</td><td class="num">960,000</td><td class="num">1일</td></tr>
+</table>
+
+<p>
+  100가구 <strong>첫 달 실지출은 $32.70</strong>이다. Deepgram $0(크레딧) + Gemini $2.70 +
+  ElevenLabs $6.00 + 서버 $24.00.
+</p>
+
+<h3>계정을 새로 만들면 또 받는가</h3>
+
+<p>
+  계정당 1회는 맞다(&ldquo;a specific allotment of Credits at no charge when you first enroll&rdquo;).
+  <strong>그러나 여러 계정으로 모아 쓰는 것은 실질적으로 불가능하다.</strong> 약관이 세 겹으로
+  막아 두었고, 무엇보다 이 백엔드는 API 키 하나로 돌기 때문에 계정을 나눠도 크레딧을 한 서비스로
+  합칠 수 없다.
+</p>
+
+<table>
+  <tr><th>장벽</th><th>근거</th></tr>
+  <tr><td>이전 불가</td>
+      <td>무료·프로모션 크레딧은 &ldquo;non-transferable under all circumstances,
+        <strong>including between accounts owned by the same organization</strong>&rdquo;.
+        Deepgram은 &ldquo;attempt to circumvent our credit usage policies or promotional terms&rdquo;로
+        보이는 이전 요청을 거절할 권리를 명시한다</td></tr>
+  <tr><td>자격 판정</td>
+      <td>ToS §5.6 &mdash; 프로모션 자격 판정에 &ldquo;<strong>device ID, method of payment, or an
+        account email address</strong> used with an existing or recent subscription&rdquo;을 쓸 수 있다</td></tr>
+  <tr><td>우회 금지</td>
+      <td>ToS §2.4(13) &mdash; 사용 제한을 &ldquo;circumvent&rdquo;하는 행위 금지. 위반 시 §1.4로
+        계정 정지, §1.1로 재가입 차단(&ldquo;You must not use our Services if your account was
+        previously terminated&rdquo;)</td></tr>
+</table>
+
+<div class="note">
+  <strong>BAA 없이 PHI를 보내면 약관 위반이다.</strong> ToS §3.5(4)는
+  &ldquo;You will not provide or grant access to any Input that includes or constitutes
+  &lsquo;protected health information&rsquo; as defined by HIPAA, unless you have executed a
+  business associate agreement&rdquo;라고 규정한다. Deepgram은 BAA를 <strong>Enterprise 고객에게만</strong>
+  제공한다. 한국 서비스에 HIPAA가 직접 적용되는지는 법무 판단이 필요하지만,
+  <strong>미국 사용자를 받는 순간 이 문서의 단가는 Enterprise 협상가로 바뀐다.</strong>
+</div>
+
 <h3>초 단위 과금 &mdash; 반올림이 없다</h3>
 
 <p>
@@ -407,6 +454,45 @@ Free 플랜 월 한도 10,000 credits의 약 3%
       <td class="num">$40.75</td><td class="num">$4,878.00</td><td class="num">$4,918.75</td>
       <td class="num">$0.49</td></tr>
 </table>
+
+<p>같은 규모를 provider별로 쪼갠 것이다. Deepgram 비중이 100가구에서 84%, 1,000가구 이상에서
+94%가 된다. ElevenLabs는 질문 pool을 캐시하므로 규모와 무관하게 플랜 정액 $6이다.</p>
+
+<table>
+  <tr><th>가구</th><th class="num">Deepgram STT</th><th class="num">Gemini LLM</th>
+      <th class="num">ElevenLabs TTS</th><th class="num">API 3사 합계</th>
+      <th class="num">Deepgram 비중</th><th class="num">서버</th></tr>
+  <tr><td>10</td><td class="num">$4.61</td><td class="num">$0.27</td><td class="num">$6.00</td>
+      <td class="num">$10.88</td><td class="num">42%</td><td class="num">$24.00</td></tr>
+  <tr><td>100</td><td class="num">$46.08</td><td class="num">$2.70</td><td class="num">$6.00</td>
+      <td class="num">$54.78</td><td class="num">84%</td><td class="num">$24.00</td></tr>
+  <tr><td>1,000</td><td class="num">$460.80</td><td class="num">$27.00</td><td class="num">$6.00</td>
+      <td class="num">$493.80</td><td class="num">93%</td><td class="num">$44~84 (미검증)</td></tr>
+  <tr><td>10,000</td><td class="num">$4,608.00</td><td class="num">$270.00</td><td class="num">$6.00</td>
+      <td class="num">$4,884.00</td><td class="num">94%</td><td class="num">미측정</td></tr>
+</table>
+
+<p>
+  서버 열이 1,000가구부터 범위이거나 비어 있는 이유는 <strong>LiveKit SFU와 Egress가
+  2 vCPU / 4 GB에서 동시 몇 통화를 버티는지 측정하지 않았기 때문</strong>이다. 월 통화 총량이
+  아니라 동시 통화 수가 인스턴스 등급을 결정한다.
+</p>
+
+<table>
+  <tr><th>가구</th><th class="num">월 통화-분</th><th class="num">평균 동시 통화</th>
+      <th class="num">피크 추정</th><th>판단</th></tr>
+  <tr><td>100</td><td class="num">4,800</td><td class="num">0.11</td><td class="num">0.6~1.1</td>
+      <td>피크에도 1통화 수준. $24 인스턴스 하나로 충분하다</td></tr>
+  <tr><td>1,000</td><td class="num">48,000</td><td class="num">1.11</td><td class="num">5.6~11.1</td>
+      <td>Large-8GB($44)~Xlarge-16GB($84) 추정. <strong>미검증</strong></td></tr>
+  <tr><td>10,000</td><td class="num">480,000</td><td class="num">11.1</td><td class="num">55.6~111</td>
+      <td>단일 인스턴스로 불가. 구성을 다시 설계해야 한다</td></tr>
+</table>
+
+<p>
+  평균 동시 통화 = 월 통화-분 &divide; 43,200분. <strong>피크 배수 5~10배는 측정값이 아니라
+  가정이다</strong>(저녁 시간대 집중을 상정). 실제 값은 사용 로그가 쌓인 뒤에 나온다.
+</p>
 
 <p>한 통화의 한계비용은 규모와 무관하게 고정이다.</p>
 
