@@ -60,6 +60,27 @@ pre{background:#f7f8fa;border:1px solid var(--line);border-radius:10px;padding:1
   font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:14px;line-height:1.7;
   margin:8px 0 14px;overflow-x:auto;color:var(--ink)}
 footer{color:var(--muted);font-size:13px;margin-top:28px;padding-top:18px;border-top:1px solid var(--line)}
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:36px 34px 30px;margin:0 0 20px}
+.hero .tag{font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.hero .head{font-size:46px;font-weight:850;letter-spacing:-.045em;line-height:1.15;margin:10px 0 2px;color:var(--ink)}
+.hero .headkrw{font-size:20px;font-weight:600;color:var(--muted);margin:0 0 26px}
+.split{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-top:2px solid #cfd5de;
+  border-bottom:1px solid var(--line);margin:0 0 26px}
+.split div{padding:18px 10px 16px;border-right:1px solid var(--line)}
+.split div:last-child{border-right:none}
+.split .who{font-size:12.5px;font-weight:800;letter-spacing:.04em;color:var(--muted);margin-bottom:6px}
+.split .amt{font-size:31px;font-weight:850;letter-spacing:-.035em;font-variant-numeric:tabular-nums;line-height:1.1}
+.split .pct{font-size:13px;color:var(--muted);margin-top:3px}
+.why{font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}
+.hero ol{margin:0;padding-left:26px;font-size:17px;line-height:1.72;color:var(--mid)}
+.hero ol li{margin-bottom:9px}
+.hero ol li b{color:var(--ink)}
+.plus{margin-top:26px;padding-top:22px;border-top:1px solid var(--line)}
+.plus p{font-size:17px;margin:0 0 10px;color:var(--mid)}
+.plus p:last-child{margin-bottom:0}
+.plus b{color:var(--ink)}
+@media (max-width:900px){.hero .head{font-size:32px}.split{grid-template-columns:repeat(2,1fr)}
+  .split div{border-bottom:1px solid var(--line)}}
 @media (max-width:900px){.cards{grid-template-columns:1fr}}
 @media print{body{background:#fff}section{break-inside:avoid}
   header{background:#14161a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
@@ -75,8 +96,38 @@ footer{color:var(--muted);font-size:13px;margin-top:28px;padding-top:18px;border
 
 <div class="wrap">
 
+<div class="hero">
+  <div class="tag">결론</div>
+  <div class="head">100가구 &rarr; 월 $78.78</div>
+  <div class="headkrw">111,673원 &nbsp;·&nbsp; 가구당 1,117원</div>
+
+  <div class="split">
+    <div><div class="who"><span class="dot" style="background:#c2410c"></span>Deepgram STT</div><div class="amt" style="color:#c2410c">$46.08</div><div class="pct">58% &middot; 65,320원</div></div>
+    <div><div class="who"><span class="dot" style="background:#1d4ed8"></span>서버</div><div class="amt" style="color:#1d4ed8">$24.00</div><div class="pct">30% &middot; 34,021원</div></div>
+    <div><div class="who"><span class="dot" style="background:#7e22ce"></span>ElevenLabs TTS</div><div class="amt" style="color:#7e22ce">$6.00</div><div class="pct">8% &middot; 8,505원</div></div>
+    <div><div class="who"><span class="dot" style="background:#a16207"></span>Gemini LLM</div><div class="amt" style="color:#a16207">$2.70</div><div class="pct">3% &middot; 3,827원</div></div>
+  </div>
+
+  <div class="why">왜 이 숫자인가</div>
+  <ol>
+    <li><b>비용은 사실상 Deepgram 하나다.</b> 분당 $0.0048 &times; 9,600분 = $46.08.
+      Gemini는 통화당 $0.00675로 <b>Deepgram의 1/17</b>이라 모델을 뭘 고르든 총액이 안 바뀐다.</li>
+    <li><b>서버 $24와 ElevenLabs $6은 규모와 무관한 정액이다.</b> 합쳐서 $30.
+      가구가 적을 때 단가가 비싸 보이는 건 이 정액을 적은 가구가 나눠 내기 때문이다.</li>
+    <li><b>그래서 가구가 10배가 되어도 총액은 6.8배만 된다</b>(1,000가구 $538).
+      대신 Deepgram 비중이 58% &rarr; 86%로 올라간다.</li>
+  </ol>
+
+  <div class="plus">
+    <p><b>첫 4개월은 $32.70만 든다.</b> Deepgram 신규 계정 $200 무료 크레딧이
+      우리 요율로 <b>694시간</b>, 100가구 기준 <b>4.3개월치</b>다. 만료가 없다.</p>
+    <p><b>계정을 새로 만들어 크레딧을 모으는 건 안 된다.</b> 무료 크레딧은 같은 조직 계정
+      사이에도 이전 불가이고, 약관이 device ID와 결제수단으로 자격을 판정한다.</p>
+  </div>
+</div>
+
 <section>
-  <h2>결론</h2>
+  <h2>상세</h2>
   <h3>규모별 월 비용</h3>
   <table>
     <tr>
