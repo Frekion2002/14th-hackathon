@@ -191,6 +191,14 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 �
 - 되묻기 탐지 재현율 미측정. `repeat-ko-v2`에서 `어` 부분 일치 오탐은 고쳤다.
 - 전체 40-case 실제 Gemini eval. provider가 처리한 7건은 7/7, 나머지 33건은 free-tier quota로
   요청 자체가 실패해 미평가다.
+- **Deepgram Model Improvement Program을 opt-out할지 결정하지 않았다.** 가격표 하단에
+  "Rates listed above opt in to the Model Improvement Program"이 있고 MIP 문서는 참여 혜택으로
+  "Discounted pricing for program participants"를 든다. 즉 우리가 쓰는 `$0.0048/분`은
+  **데이터 학습 이용에 동의한 가격**이다. 현재 `services/deepgram.py`는 `mip_opt_out`을 보내지
+  않으므로 부모 건강 대화 오디오가 학습 데이터에 계약상 포함되는 상태다. opt-out은 요청에
+  `mip_opt_out=true`를 붙이면 되고 그 경우 데이터는 처리 기간만 보관된다. **다만 opt-out 요율은
+  공개되어 있지 않아 비용 영향을 계산할 수 없다.** 실제 사용자 건강정보를 보내기 전에 단가를
+  확인하고 코드에 반영할지 결정해야 한다. 해커톤 더미 데이터 구간에서는 문제가 아니다.
 - **8주 seed를 Compose PostgreSQL에서 실행한 기록이 없다.** `tests/test_demo_history.py`는
   격리 SQLite에서 돌고, 실제 실행 경로는 `docker compose exec backend python -m
   scripts.seed_demo_history`다. 8/18 배포 후 한 번 돌려 결과를 6절에 남긴다. 절차는
@@ -501,6 +509,9 @@ Compose는 ignored `backend/private/`를 `/run/secrets/collog`에 read-only moun
 - 원본 오디오는 분석 성공 여부와 관계없이 폐기한다.
 - 저장 가능한 것은 구조화 텍스트, 파생 특징값, 리포트다.
 - Gemini 무료 티어에는 해커톤 더미 데이터만 보낸다.
+- Deepgram 요청도 같은 종류의 조건이 걸려 있다. `$0.0048/분`은 Model Improvement Program에
+  opt-in한 가격이며 현재 코드는 opt-out하지 않는다. 실제 건강정보를 보내려면 `mip_opt_out=true`
+  적용 여부와 그때의 단가를 먼저 확정한다.
 - LLM은 대화에 없는 원인, 질환, 위험도, 응급도, 치료를 생성하지 않는다.
 - 비교는 인구집단 진단 cutoff가 아니라 같은 사람·같은 time slot의 이전 기록을 기준으로 한다.
 - Apple `.p8`, Deepgram/Gemini/API/JWT secret은 Git에 넣지 않는다.
@@ -523,6 +534,11 @@ ElevenLabs 음색을 쓰면 ElevenLabs key와 voice ID가 추가된다.
 LiveKit key/secret은 LiveKit Cloud에서 받지 않는다. 실제 iOS PushKit 수신까지 시연하면 Apple
 APNs 자격증명이 추가된다. Gemini 무료 tier에는 제품 개선 데이터 사용 조건이 있으므로 실제
 건강정보가 아닌 더미 데이터만 사용한다.
+
+Deepgram도 같은 조건이 있다. 공개 가격표의 `$0.0048/분`은 Model Improvement Program opt-in
+요율이고, opt-out(`mip_opt_out=true`) 시의 요율은 공개되어 있지 않다. 실제 건강정보를 보내기
+전에 확인한다. Deepgram은 구독이 아니라 초 단위 pay-as-you-go 크레딧이며 신규 계정 $200 무료
+크레딧은 만료가 없다. 우리 요율로 41,667분이라 100가구 사용량(월 9,600분) 기준 약 4.3개월치다.
 
 Deepgram Aura TTS는 2026-08-11 공식 지원 언어에 한국어가 없어 사용하지 않는다. ElevenLabs
 `eleven_flash_v2_5`, `language_code=ko`, 기본 MP3 44.1 kHz/128 kbps를 사용한다. 생성물은 질문
@@ -790,3 +806,15 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   그려 오프라인에서 열린다. 원화는 2026-08-14 종가 1 USD = 1,417.53원으로 병기했다.
   절감 수단 중 "무음 제거"는 절감 폭을 측정하지 않았으므로 차트에 숫자를 넣지 않고 별도
   경고로만 적었다.
+- 2026-08-17: Deepgram 과금 구조를 공식 FAQ로 확인해 운영비 문서에 절을 추가했다. 구독이
+  아니라 초 단위 pay-as-you-go 크레딧이고 반올림이 없다("true per-second billing"). 따라서
+  무음 제거 절감이 선형으로 반영되며 짧은 통화가 불리하지 않다. 신규 계정 $200 무료 크레딧은
+  만료가 없어 우리 요율로 41,667분, 월 9,600분 기준 약 4.3개월치다. 반대로 절감이 안 되는
+  것도 확인했다. 2트랙을 stereo 한 파일로 합쳐도 "billed for 20 minutes"라 절감이 0이고,
+  구형 모델(Nova-2 streaming $0.35/hr, Base $0.87/hr, Enhanced $0.99/hr)은 우리가 쓰는
+  Nova-3 pre-recorded $0.288/hr보다 비싸다. Growth는 연 $4,000+ 약정에 초과분 +10%
+  프리미엄이라 연 사용량 $553인 우리 규모에는 손해다.
+- 2026-08-17: 위 확인 과정에서 `$0.0048/분`이 Model Improvement Program opt-in 요율임을
+  발견했다. `services/deepgram.py`가 `mip_opt_out`을 보내지 않아 실제 건강정보를 보내는 순간
+  학습 데이터 이용에 동의한 상태가 된다. opt-out 요율이 공개되지 않아 비용 영향을 계산할 수
+  없으므로 코드는 바꾸지 않고 7절 불변조건과 3절 미완료에 결정 사항으로 기록했다.

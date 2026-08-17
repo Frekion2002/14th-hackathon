@@ -81,8 +81,8 @@
 
 <div class="note">
   <strong>이 문서에서 "가정"과 "확인된 단가"는 다른 것이다.</strong>
-  단가(§1)는 각 업체 공식 가격표에서 확인했다. 사용량(§2)은 우리가 정한 가정이며 실측이
-  아니다. 특히 Gemini 출력 토큰 수는 측정하지 않았으므로 §4에서 범위로 제시한다.
+  단가(§1)는 각 업체 공식 가격표에서 확인했다. 사용량(§3)은 우리가 정한 가정이며 실측이
+  아니다. 특히 Gemini 출력 토큰 수는 측정하지 않았으므로 §5에서 범위로 제시한다.
   숫자 하나를 단정하지 않는다.
 </div>
 
@@ -160,7 +160,103 @@
   eval 중 33건이 요청 자체에 실패한 이력이 있다.
 </div>
 
-<h2>2. 사용량 가정</h2>
+<h2>2. Deepgram 과금 구조 &mdash; 구독이 아니라 크레딧 선불이다</h2>
+
+<p>
+  월 $46.08이 커 보이지만 <strong>정액 구독료는 한 푼도 들어 있지 않다.</strong> 전액이 사용량이다.
+  9,600분(160시간)을 처리하기 때문에 그만큼 나온다.
+</p>
+
+<table>
+  <tr><th>흔한 오해</th><th>실제</th></tr>
+  <tr>
+    <td>월 구독료가 있어서 $46이 나간다</td>
+    <td><strong>구독료 없음.</strong> Pay As You Go는 &ldquo;No minimums. No expiration.
+      No credit card required.&rdquo; 안 쓰면 $0이다</td>
+  </tr>
+  <tr>
+    <td>사용한 만큼 내는 크레딧 방식이 따로 있다</td>
+    <td><strong>Pay As You Go가 바로 그 크레딧 방식이다.</strong> 계정에 크레딧을 채워 두고
+      처리한 초만큼 차감된다. 별도로 고를 다른 요금제가 아니다</td>
+  </tr>
+  <tr>
+    <td>&mdash;</td>
+    <td><strong>구독에 해당하는 것은 Growth다.</strong> 연 $4,000+ 선불 약정으로 약 20% 할인.
+      우리 예상 사용량은 연 $553이라 약정액이 7배 크다. <strong>지금 고르면 오히려 손해다</strong></td>
+  </tr>
+</table>
+
+<h3>$200 무료 크레딧 &mdash; 만료가 없다</h3>
+
+<pre>
+신규 계정 무료 크레딧            $200 (카드 등록 불필요, 만료 없음)
+우리 요율로 환산   $200 / $0.0048 = 41,667분 = 694시간
+월 사용량                        9,600분
+------------------------------------------------------------
+소진까지                         약 4.3개월
+</pre>
+
+<p>
+  Deepgram FAQ는 &ldquo;Unlike &lsquo;free tiers&rsquo; that expire after 12 months, this credit is
+  available until you use it up&rdquo;이라고 명시한다. 즉 <strong>해커톤 개발과 데모 구간의 Deepgram
+  비용은 사실상 $0이고, 100가구로 실서비스를 시작해도 약 4개월은 청구가 없다.</strong>
+  §4의 월 $46.08은 무료 크레딧을 다 쓴 이후의 정상 요금이다.
+</p>
+
+<h3>초 단위 과금 &mdash; 반올림이 없다</h3>
+
+<p>
+  &ldquo;Deepgram uses true per-second billing. If your audio file is 14 seconds long, you pay for
+  exactly 14 seconds.&rdquo; 경쟁사처럼 15초나 1분 단위로 올려 받지 않는다. 이것이 두 가지를 뜻한다.
+</p>
+
+<ul>
+  <li><strong>무음 제거 절감이 그대로 반영된다.</strong> 잘라낸 1초가 정확히 1초만큼 청구에서
+    빠진다. §10에서 이 수단을 1순위로 둔 이유다.</li>
+  <li><strong>짧은 통화가 불리하지 않다.</strong> 20초 미만 발화를 분석에서 제외하는 현재 정책이
+    과금 측면에서 손해를 만들지 않는다.</li>
+</ul>
+
+<h3>확인 결과 절감이 안 되는 것</h3>
+
+<p>다시 제안되지 않도록 근거와 함께 남긴다.</p>
+
+<table>
+  <tr><th>아이디어</th><th>판정</th><th>근거</th></tr>
+  <tr>
+    <td>2트랙을 stereo 1파일로 합쳐 1건으로 보내기</td>
+    <td><strong>절감 0</strong></td>
+    <td>&ldquo;If you process a 10-minute file with 2 channels (stereo), you are billed for
+      20 minutes.&rdquo; 파일 수가 아니라 처리된 총 오디오 길이로 과금한다</td>
+  </tr>
+  <tr>
+    <td>더 싼 구형 모델로 내리기</td>
+    <td><strong>오히려 비싸다</strong></td>
+    <td>Nova-2 streaming $0.35/hr, Base $0.87/hr, Enhanced $0.99/hr.
+      우리가 쓰는 Nova-3 monolingual pre-recorded는 $0.0048/분 = <strong>$0.288/hr</strong>로
+      이미 가장 싸다</td>
+  </tr>
+  <tr>
+    <td>Growth로 옮겨 단가를 낮추기</td>
+    <td><strong>지금은 손해</strong></td>
+    <td>연 $4,000+ 약정. 초과분은 Growth 요율 +10% 프리미엄에 주간 청구이며, 카드를 빼고
+      크레딧이 바닥나면 API가 <code>402</code>를 반환한다. 우리 연 사용량 $553에는 맞지 않는다</td>
+  </tr>
+</table>
+
+<div class="note">
+  <strong>$0.0048은 데이터 학습 이용에 동의한 가격이다.</strong> 가격표 하단에
+  &ldquo;Rates listed above opt in to the Model Improvement Program&rdquo;이 적혀 있고, MIP 문서는
+  참여 혜택으로 &ldquo;Discounted pricing for program participants&rdquo;를 든다.
+  <strong>현재 <code>services/deepgram.py</code>는 <code>mip_opt_out</code>을 보내지 않으므로
+  부모 건강 대화 오디오가 학습 데이터에 계약상 포함되는 상태다.</strong>
+  opt-out은 요청에 <code>mip_opt_out=true</code>를 붙이면 되고 그 경우 데이터는 처리 기간만
+  보관된다. <strong>다만 opt-out 요율은 공개되어 있지 않다.</strong> 실제 사용자 건강정보를 보내기
+  전에 opt-out 단가를 확인해야 하며, 이 문서의 $46.08은 <em>opt-in 가격</em>이다.
+  Gemini 무료 tier와 같은 종류의 문제다.
+</div>
+
+<h2>3. 사용량 가정</h2>
 
 <table>
   <tr><th>변수</th><th class="num">값</th><th>근거와 위험</th></tr>
@@ -187,11 +283,11 @@ STT 처리량   = 400건 x 12분 x 2트랙     = 9,600분 / 월
 Gemini 요청  = 400건 x 1                = 400건 / 월
 </pre>
 
-<h2>3. 월 운영비 &mdash; 100가구 기준</h2>
+<h2>4. 월 운영비 &mdash; 100가구 기준</h2>
 
 <p>
   현재 설정(<code>GEMINI_MODEL=gemini-3.6-flash</code>, 부모-only 추출) 기준이다.
-  Gemini 열은 출력 토큰 1,200 가정값이며 범위는 §4에 있다.
+  Gemini 열은 출력 토큰 1,200 가정값이며 범위는 §5에 있다.
 </p>
 
 <table>
@@ -201,7 +297,7 @@ Gemini 요청  = 400건 x 1                = 400건 / 월
   <tr><td>Lightsail 스냅샷</td><td><span class="tag t-fixed">고정</span></td>
       <td class="num">$1.00</td><td>20 GB &times; $0.05</td></tr>
   <tr><td>ElevenLabs Starter</td><td><span class="tag t-fixed">고정</span></td>
-      <td class="num">$6.00</td><td>플랜 정액. 실사용 credit은 §5 참조</td></tr>
+      <td class="num">$6.00</td><td>플랜 정액. 실사용 credit은 §6 참조</td></tr>
   <tr><td>도메인 + DNS</td><td><span class="tag t-fixed">고정</span></td>
       <td class="num">$1.50</td><td>$1~2 범위의 중간. 방식 미결정</td></tr>
   <tr><td>Apple Developer 연회비 월할</td><td><span class="tag t-fixed">고정</span></td>
@@ -241,7 +337,7 @@ Gemini   = 요청 수 x (입력 토큰 / 1,000,000 x 입력 단가
   분이 줄어든다.
 </div>
 
-<h2>4. Gemini 감도 분석</h2>
+<h2>5. Gemini 감도 분석</h2>
 
 <p>출력 토큰과 모델 선택에 따른 월 Gemini 비용이다. 나머지 항목은 변하지 않는다.</p>
 
@@ -274,7 +370,7 @@ Gemini   = 요청 수 x (입력 토큰 / 1,000,000 x 입력 단가
   2배가 되어도 최악값이 $15.89이며 여전히 Deepgram의 3분의 1이다.
 </p>
 
-<h2>5. ElevenLabs 실사용량 &mdash; 플랜 정액이 지배한다</h2>
+<h2>6. ElevenLabs 실사용량 &mdash; 플랜 정액이 지배한다</h2>
 
 <p>
   질문 MP3는 <code>질문 ID + voice + model + format + text hash</code>로 캐시한다. 질문 pool은
@@ -292,7 +388,7 @@ Free 플랜 월 한도 10,000 credits의 약 3%
   Phase 3)으로 바뀌면 이 항목은 고정비에서 변동비로 성격이 바뀌므로 그때 다시 계산한다.
 </p>
 
-<h2>6. 규모별 비용</h2>
+<h2>7. 규모별 비용</h2>
 
 <table>
   <tr><th>가구</th><th class="num">월 통화</th><th class="num">STT 분</th>
@@ -330,7 +426,7 @@ Free 플랜 월 한도 10,000 credits의 약 3%
   전까지 1,000가구 이상 행은 <strong>변동비 하한</strong>으로만 읽어야 한다.
 </div>
 
-<h2>7. 네트워크 전송량 점검</h2>
+<h2>8. 네트워크 전송량 점검</h2>
 
 <p>
   Lightsail Medium-4GB의 전송 허용량은 월 4 TB다. Opus 비트레이트는 실측하지 않았으므로
@@ -357,7 +453,7 @@ Free 플랜 월 한도 10,000 credits의 약 3%
   허용량 계산에서 빠진다. 아웃바운드만 과금 대상이라는 전제이며 실제 청구서로 확인해야 한다.
 </p>
 
-<h2>8. 비용에 넣지 않은 것</h2>
+<h2>9. 비용에 넣지 않은 것</h2>
 
 <table>
   <tr><th>항목</th><th>왜 제외했는가</th></tr>
@@ -381,7 +477,14 @@ Free 플랜 월 한도 10,000 credits의 약 3%
   <tr><td>인건비</td><td>인프라 비용만 다루는 문서다</td></tr>
 </table>
 
-<h2>9. 비용을 줄일 수 있는 순서</h2>
+<h2>10. 비용을 줄일 수 있는 순서</h2>
+
+<p>
+  1번이 1순위인 근거는 &sect;2에 있다. Deepgram은 초 단위로 과금하고 15초/1분 반올림이 없으므로
+  <strong>잘라낸 시간이 정확히 그만큼 청구에서 빠진다.</strong> 반대로 &ldquo;2트랙을 stereo 한
+  파일로 합치기&rdquo;와 &ldquo;구형 모델로 내리기&rdquo;는 확인 결과 절감이 0이거나 오히려 비싸므로
+  아래 표에 넣지 않았다. 근거는 &sect;2의 마지막 표에 있다.
+</p>
 
 <table>
   <tr><th>#</th><th>수단</th><th class="num">100가구 절감</th><th>비고</th></tr>
@@ -410,7 +513,7 @@ Free 플랜 월 한도 10,000 credits의 약 3%
   늘리는 것이 단위 비용을 낮추는 가장 빠른 방법이다.
 </p>
 
-<h2>10. 재계산 방법</h2>
+<h2>11. 재계산 방법</h2>
 
 <pre>
 families      = 가구 수

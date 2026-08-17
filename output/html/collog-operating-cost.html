@@ -143,7 +143,65 @@ footer{color:var(--muted);font-size:12.5px;margin-top:26px;padding-top:16px;bord
 </section>
 
 <section>
-  <h2>02 &mdash; 성격</h2>
+  <h2>02 &mdash; 과금 방식</h2>
+  <h3>Deepgram은 구독이 아니다. 쓴 초만큼 나간다</h3>
+  <p class="lede">
+    월 $46.08에 <strong>정액 구독료는 한 푼도 없다.</strong> 전액이 사용량이다.
+    9,600분(160시간)을 처리하니까 그만큼 나오는 것이고, 안 쓰면 $0이다.
+    Pay As You Go 자체가 계정에 크레딧을 채워 두고 초 단위로 차감하는 방식이다.
+  </p>
+  <table>
+    <tr><th>항목</th><th>실제</th></tr>
+    <tr><td>정액 구독료</td>
+        <td><strong>없다.</strong> &ldquo;No minimums. No expiration. No credit card required.&rdquo;</td></tr>
+    <tr><td>과금 단위</td>
+        <td><strong>초 단위, 반올림 없음.</strong> 14초 파일은 정확히 14초만 청구된다.
+            15초/1분으로 올려 받는 경쟁사와 다르다</td></tr>
+    <tr><td>구독에 해당하는 것</td>
+        <td><strong>Growth 플랜.</strong> 연 $4,000+ 선불 약정으로 약 20% 할인.
+            우리 예상 연 사용량은 $553이라 약정액이 7배 크다 &mdash; <strong>지금 고르면 손해다</strong></td></tr>
+    <tr><td>Growth 초과 시</td>
+        <td>Growth 요율 <strong>+10% 프리미엄</strong>, 주간 청구. 카드를 빼고 크레딧이 바닥나면
+            API가 <code>402</code>를 반환한다</td></tr>
+  </table>
+
+  <p class="kicker" style="margin-bottom:10px">그리고 신규 계정에 $200 무료 크레딧이 있다. 만료가 없다.</p>
+  <svg class="chart" viewBox="0 0 1000 92" role="img">
+<text x="0" y="12" class="ax">$200 무료 크레딧 = 41,667분 (694시간) · 만료 없음</text>
+<rect x="0" y="24" width="1000" height="30" rx="4" fill="#e3e6ec"/>
+<rect x="0.0" y="24" width="228.4" height="30" rx="3" fill="#4d7c0f" opacity="1.00"/>
+<text x="115.2" y="43" class="sb-n" text-anchor="middle">1개월</text>
+<rect x="230.4" y="24" width="228.4" height="30" rx="3" fill="#4d7c0f" opacity="0.86"/>
+<text x="345.6" y="43" class="sb-n" text-anchor="middle">2개월</text>
+<rect x="460.8" y="24" width="228.4" height="30" rx="3" fill="#4d7c0f" opacity="0.72"/>
+<text x="576.0" y="43" class="sb-n" text-anchor="middle">3개월</text>
+<rect x="691.2" y="24" width="228.4" height="30" rx="3" fill="#4d7c0f" opacity="0.58"/>
+<text x="806.4" y="43" class="sb-n" text-anchor="middle">4개월</text>
+<rect x="921.6" y="24" width="77.4" height="30" rx="3" fill="#4d7c0f" opacity="0.30"/>
+<text x="960.8" y="43" class="ts-p" text-anchor="middle">0.3</text>
+<text x="0" y="76" class="rb-v">월 9,600분 기준 약 4.3개월치 · 이 구간 Deepgram 청구 $0</text>
+</svg>
+  <p class="lede" style="margin-top:0">
+    &ldquo;Unlike &lsquo;free tiers&rsquo; that expire after 12 months, this credit is available until
+    you use it up.&rdquo; 즉 <strong>해커톤 개발과 데모 구간의 Deepgram 비용은 사실상 $0이고,
+    100가구로 실서비스를 시작해도 약 4개월은 청구가 없다.</strong> 앞의 월 $46.08은 무료 크레딧을
+    다 쓴 뒤의 정상 요금이다.
+  </p>
+
+  <div class="note">
+    <strong>대신 $0.0048은 데이터 학습 이용에 동의한 가격이다.</strong>
+    가격표 하단에 &ldquo;Rates listed above opt in to the Model Improvement Program&rdquo;이 있고,
+    MIP 문서는 참여 혜택으로 &ldquo;Discounted pricing&rdquo;을 든다.
+    <strong>현재 <code>services/deepgram.py</code>는 <code>mip_opt_out</code>을 보내지 않으므로
+    부모 건강 대화 오디오가 학습 데이터에 계약상 포함되는 상태다.</strong>
+    <code>mip_opt_out=true</code>를 붙이면 처리 기간만 보관되지만 <strong>그때의 요율은 공개되어
+    있지 않다.</strong> 실제 사용자 건강정보를 보내기 전에 확인해야 한다. Gemini 무료 tier와 같은
+    종류의 문제다.
+  </div>
+</section>
+
+<section>
+  <h2>03 &mdash; 성격</h2>
   <h3>고정비 $40.75는 가구 수와 무관하다</h3>
   <p class="lede">
     서버, ElevenLabs 플랜, Apple 연회비, 도메인은 가구가 1곳이든 1,000곳이든 똑같이 나간다.
@@ -167,7 +225,7 @@ footer{color:var(--muted);font-size:12.5px;margin-top:26px;padding-top:16px;bord
 </section>
 
 <section>
-  <h2>03 &mdash; 규모</h2>
+  <h2>04 &mdash; 규모</h2>
   <h3>가구당 단가는 $0.49로 수렴한다</h3>
   <p class="lede">
     고정비가 분산되면서 가구당 비용은 빠르게 떨어지지만, 통화 1건의 한계비용($0.122)
@@ -230,7 +288,7 @@ footer{color:var(--muted);font-size:12.5px;margin-top:26px;padding-top:16px;bord
 </section>
 
 <section>
-  <h2>04 &mdash; 감도</h2>
+  <h2>05 &mdash; 감도</h2>
   <h3>Gemini는 비용 변수가 아니다</h3>
   <p class="lede">
     모델과 출력 토큰 수를 어떻게 잡아도 월 $0.76에서 $3.97 사이다. 전체 $107.44 대비
@@ -275,7 +333,7 @@ footer{color:var(--muted);font-size:12.5px;margin-top:26px;padding-top:16px;bord
 </section>
 
 <section>
-  <h2>05 &mdash; 대역폭</h2>
+  <h2>06 &mdash; 대역폭</h2>
   <h3>전송량은 걱정거리가 아니다</h3>
   <p class="lede">
     Lightsail 허용량은 월 4 TB다. Opus 48 kbps라는 가장 불리한 가정에서도 월 6.91 GB,
@@ -295,7 +353,7 @@ footer{color:var(--muted);font-size:12.5px;margin-top:26px;padding-top:16px;bord
 </section>
 
 <section>
-  <h2>06 &mdash; 절감</h2>
+  <h2>07 &mdash; 절감</h2>
   <h3>구조를 바꾸지 않으면 월 $8.25가 한계다</h3>
   <p class="lede">
     당장 적용 가능한 세 가지를 다 합쳐야 월 $8.25(11,695원), 전체의 7.7%다.
@@ -347,7 +405,7 @@ footer{color:var(--muted);font-size:12.5px;margin-top:26px;padding-top:16px;bord
 </section>
 
 <section>
-  <h2>07 &mdash; 신뢰 범위</h2>
+  <h2>08 &mdash; 신뢰 범위</h2>
   <h3>이 숫자에서 확인된 것과 가정한 것</h3>
   <p class="lede">
     금액을 한 줄로 제시하면 전부 같은 무게로 보인다. 실제로는 단가는 공식 가격표에서 확인했고
@@ -385,7 +443,7 @@ footer{color:var(--muted);font-size:12.5px;margin-top:26px;padding-top:16px;bord
 </section>
 
 <section>
-  <h2>08 &mdash; 비용에 넣지 않은 것</h2>
+  <h2>09 &mdash; 비용에 넣지 않은 것</h2>
   <h3>지금은 0원이지만 서비스가 되면 생기는 것</h3>
   <table>
     <tr><th>항목</th><th>지금 상태</th><th>서비스 전환 시</th></tr>
