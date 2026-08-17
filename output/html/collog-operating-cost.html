@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>콜록 서비스 운영비 &mdash; 한눈에 보기</title>
+<style>
+:root{--ink:#14161a;--mid:#4b5260;--muted:#767d8a;--line:#dfe3e9;--bg:#f2f4f7;--card:#fff;--warn:#8a4b00;--warnbg:#fdf1e0}
+*{box-sizing:border-box}
+body{margin:0;padding:0 0 80px;background:var(--bg);color:var(--ink);
+  font:15px/1.65 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+header{background:#14161a;color:#fff;padding:40px 0 34px;margin-bottom:30px}
+header .wrap{max-width:1080px}
+h1{font-size:30px;margin:0 0 6px;letter-spacing:-.03em;font-weight:800}
+header p{margin:0;color:#a7aebb;font-size:13.5px}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:26px 28px;margin:0 0 18px}
+h2{font-size:12px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);margin:0 0 4px}
+h3{font-size:21px;font-weight:750;letter-spacing:-.02em;margin:0 0 6px}
+.lede{color:var(--mid);font-size:14.5px;margin:0 0 20px;max-width:74ch}
+.lede:last-child{margin-bottom:0}
+p{margin:0 0 12px}
+.chart{display:block;width:100%;height:auto;margin:4px 0 14px;overflow:visible}
+.sb-n{font-size:12.5px;font-weight:700;fill:#fff}
+.sb-v{font-size:12px;fill:#fff;opacity:.85}
+.rb-l{font-size:13.5px;fill:var(--ink)}
+.rb-v{font-size:13px;font-weight:700;fill:var(--mid);dominant-baseline:middle}
+.ts-l{font-size:12px;font-weight:800;letter-spacing:.08em;fill:var(--muted)}
+.ts-v{font-size:19px;font-weight:800;fill:#fff}
+.ts-p{font-size:13px;font-weight:700;fill:var(--mid)}
+.grid{stroke:#e6e9ef;stroke-width:1}
+.ax{font-size:12px;fill:var(--muted)}
+.pt{font-size:12.5px;font-weight:800;fill:var(--ink)}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+.card .k{font-size:11.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.card .v{font-size:30px;font-weight:800;letter-spacing:-.03em;margin:6px 0 2px;
+  font-variant-numeric:tabular-nums}
+.card .w{font-size:13px;color:var(--mid);font-variant-numeric:tabular-nums}
+.card .n{font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.5}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12.5px;color:var(--mid);margin:2px 0 0}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.sw{width:11px;height:11px;border-radius:3px;display:inline-block}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0 0}
+th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left;vertical-align:top}
+th{font-size:11.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  border-bottom:1.5px solid var(--line)}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;
+  font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace}
+tr.tot td{font-weight:800;background:#f7f8fa;border-bottom:none}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+.box{border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.box h4{margin:0 0 10px;font-size:13px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.box ul{margin:0;padding-left:18px;font-size:13.5px;color:var(--mid)}
+.box li{margin-bottom:7px}
+.box.ok h4{color:#0f6b3f}
+.box.guess h4{color:var(--warn)}
+.note{background:var(--warnbg);border-left:4px solid var(--warn);border-radius:0 8px 8px 0;
+  padding:14px 18px;margin:16px 0 0;font-size:14px;color:#4a3a22}
+.note strong{color:var(--warn)}
+.kicker{font-size:15.5px;font-weight:700;color:var(--ink);margin:14px 0 0}
+code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:12.5px;
+  background:#eef0f4;padding:1px 5px;border-radius:3px}
+a{color:#1d4ed8}
+footer{color:var(--muted);font-size:12.5px;margin-top:26px;padding-top:16px;border-top:1px solid var(--line)}
+@media (max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}}
+@media print{body{background:#fff}section{break-inside:avoid;box-shadow:none}header{background:#14161a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style>
+</head>
+<body>
+
+<header><div class="wrap">
+  <h1>콜록 서비스 운영비</h1>
+  <p>100가구 &middot; 가구당 월 4회 &middot; 통화 12분 &middot; 양쪽 음성 모두 분석 &nbsp;|&nbsp;
+     기준일 2026-08-17 &middot; 환율 1 USD = 1,417.53원 (2026-08-14)</p>
+</div></header>
+
+<div class="wrap">
+
+<div class="cards">
+  <div class="card">
+    <div class="k">월 총액</div>
+    <div class="v">$107.44</div>
+    <div class="w">152,299원</div>
+    <div class="n">예비비 20% 포함</div>
+  </div>
+  <div class="card">
+    <div class="k">가구당 월</div>
+    <div class="v">$1.07</div>
+    <div class="w">1,523원</div>
+    <div class="n">100가구로 나눈 값</div>
+  </div>
+  <div class="card">
+    <div class="k">통화 1건</div>
+    <div class="v">$0.122</div>
+    <div class="w">173원</div>
+    <div class="n">규모와 무관한 한계비용</div>
+  </div>
+  <div class="card">
+    <div class="k">변동비 중 STT</div>
+    <div class="v">94%</div>
+    <div class="w">$46.08 / $48.78</div>
+    <div class="n">비용은 사실상 STT 하나다</div>
+  </div>
+</div>
+
+<section>
+  <h2>01 &mdash; 구성</h2>
+  <h3>한 항목이 절반에 가깝다</h3>
+  <p class="lede">
+    월 $107.44 중 Deepgram STT가 $46.08로 42.9%다. 여기에 서버 $24.00를 더하면
+    두 항목이 65%를 넘는다. 나머지 다섯 항목을 다 합쳐도 $19.45다.
+  </p>
+  <svg class="chart" viewBox="0 0 1000 54" role="img" aria-label="월 비용 구성">
+<rect x="0.00" y="0" width="427.39" height="54" rx="2" fill="#c2410c"/>
+<text x="213.70" y="23.0" class="sb-n" text-anchor="middle">Deepgram STT</text><text x="213.70" y="40.0" class="sb-v" text-anchor="middle">42.9%</text>
+<rect x="428.89" y="0" width="221.88" height="54" rx="2" fill="#1d4ed8"/>
+<text x="539.83" y="23.0" class="sb-n" text-anchor="middle">Lightsail 인스턴스</text><text x="539.83" y="40.0" class="sb-v" text-anchor="middle">22.3%</text>
+<rect x="652.27" y="0" width="165.20" height="54" rx="2" fill="#7c7f88"/>
+<text x="734.87" y="23.0" class="sb-n" text-anchor="middle">예비비 20%</text><text x="734.87" y="40.0" class="sb-v" text-anchor="middle">16.7%</text>
+<rect x="818.97" y="0" width="75.29" height="54" rx="2" fill="#0f766e"/>
+<rect x="895.76" y="0" width="54.35" height="54" rx="2" fill="#7e22ce"/>
+<rect x="951.60" y="0" width="23.63" height="54" rx="2" fill="#a16207"/>
+<rect x="976.73" y="0" width="12.46" height="54" rx="2" fill="#0e7490"/>
+<rect x="990.69" y="0" width="7.81" height="54" rx="2" fill="#4d7c0f"/>
+</svg>
+  <p class="legend"><span><i class="sw" style="background:#c2410c"></i>Deepgram STT $46.08</span><span><i class="sw" style="background:#1d4ed8"></i>Lightsail 인스턴스 $24.00</span><span><i class="sw" style="background:#7c7f88"></i>예비비 20% $17.91</span><span><i class="sw" style="background:#0f766e"></i>Apple Developer $8.25</span><span><i class="sw" style="background:#7e22ce"></i>ElevenLabs Starter $6.00</span><span><i class="sw" style="background:#a16207"></i>Gemini 구조화 $2.70</span><span><i class="sw" style="background:#0e7490"></i>도메인 + DNS $1.50</span><span><i class="sw" style="background:#4d7c0f"></i>스냅샷 20GB $1.00</span></p>
+
+  <table>
+    <tr><th>항목</th><th>성격</th><th class="n">월 USD</th><th class="n">월 KRW</th><th class="n">비중</th></tr>
+    <tr><td><i class="sw" style="background:#c2410c"></i> Deepgram STT</td><td>변동비</td><td class="n">$46.08</td><td class="n">65,320원</td><td class="n">42.9%</td></tr>
+<tr><td><i class="sw" style="background:#1d4ed8"></i> Lightsail 인스턴스</td><td>고정비</td><td class="n">$24.00</td><td class="n">34,021원</td><td class="n">22.3%</td></tr>
+<tr><td><i class="sw" style="background:#7c7f88"></i> 예비비 20%</td><td>예비비</td><td class="n">$17.91</td><td class="n">25,388원</td><td class="n">16.7%</td></tr>
+<tr><td><i class="sw" style="background:#0f766e"></i> Apple Developer</td><td>고정비</td><td class="n">$8.25</td><td class="n">11,695원</td><td class="n">7.7%</td></tr>
+<tr><td><i class="sw" style="background:#7e22ce"></i> ElevenLabs Starter</td><td>고정비</td><td class="n">$6.00</td><td class="n">8,505원</td><td class="n">5.6%</td></tr>
+<tr><td><i class="sw" style="background:#a16207"></i> Gemini 구조화</td><td>변동비</td><td class="n">$2.70</td><td class="n">3,827원</td><td class="n">2.5%</td></tr>
+<tr><td><i class="sw" style="background:#0e7490"></i> 도메인 + DNS</td><td>고정비</td><td class="n">$1.50</td><td class="n">2,126원</td><td class="n">1.4%</td></tr>
+<tr><td><i class="sw" style="background:#4d7c0f"></i> 스냅샷 20GB</td><td>고정비</td><td class="n">$1.00</td><td class="n">1,418원</td><td class="n">0.9%</td></tr>
+    <tr class="tot"><td>합계</td><td></td><td class="n">$107.44</td>
+        <td class="n">152,299원</td><td class="n">100.0%</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>02 &mdash; 성격</h2>
+  <h3>고정비 $40.75는 가구 수와 무관하다</h3>
+  <p class="lede">
+    서버, ElevenLabs 플랜, Apple 연회비, 도메인은 가구가 1곳이든 1,000곳이든 똑같이 나간다.
+    100가구 규모에서는 이 고정비가 전체의 45.5%다. <strong>즉 지금 단위 비용이 비싼 이유는
+    비싼 서비스를 쓰기 때문이 아니라 가구가 적기 때문이다.</strong>
+  </p>
+  <svg class="chart" viewBox="0 0 1000 76" role="img">
+<rect x="0" y="18" width="453.15" height="40" rx="3" fill="#1d4ed8"/>
+<rect x="457.15" y="18" width="542.85" height="40" rx="3" fill="#c2410c"/>
+<text x="226.6" y="12" class="ts-l" text-anchor="middle">고정비 · 가구 수와 무관</text>
+<text x="226.6" y="44" class="ts-v" text-anchor="middle">$40.75</text>
+<text x="226.6" y="72" class="ts-p" text-anchor="middle">45.5%</text>
+<text x="728.6" y="12" class="ts-l" text-anchor="middle">변동비 · 가구 수에 비례</text>
+<text x="728.6" y="44" class="ts-v" text-anchor="middle">$48.78</text>
+<text x="728.6" y="72" class="ts-p" text-anchor="middle">54.5%</text>
+</svg>
+  <p class="lede" style="margin-top:6px">
+    변동비의 정체는 단순하다. 통화 1건당 Deepgram $0.1152 + Gemini $0.0068 = 약 $0.122이고,
+    가구 1곳이 월 4건을 하면 <strong>가구당 월 $0.49(695원)</strong>다.
+  </p>
+</section>
+
+<section>
+  <h2>03 &mdash; 규모</h2>
+  <h3>가구당 단가는 $0.49로 수렴한다</h3>
+  <p class="lede">
+    고정비가 분산되면서 가구당 비용은 빠르게 떨어지지만, 통화 1건의 한계비용($0.122)
+    아래로는 절대 내려가지 않는다. 100가구에서 이미 $0.90이고 1,000가구에서 $0.53,
+    그 뒤로는 거의 평평하다.
+  </p>
+  <svg class="chart" viewBox="0 0 1000 300" role="img">
+<line x1="70" y1="248.0" x2="960" y2="248.0" class="grid"/>
+<text x="58" y="252.0" class="ax" text-anchor="end">$0</text>
+<line x1="70" y1="203.6" x2="960" y2="203.6" class="grid"/>
+<text x="58" y="207.6" class="ax" text-anchor="end">$1</text>
+<line x1="70" y1="159.2" x2="960" y2="159.2" class="grid"/>
+<text x="58" y="163.2" class="ax" text-anchor="end">$2</text>
+<line x1="70" y1="114.8" x2="960" y2="114.8" class="grid"/>
+<text x="58" y="118.8" class="ax" text-anchor="end">$3</text>
+<line x1="70" y1="70.4" x2="960" y2="70.4" class="grid"/>
+<text x="58" y="74.4" class="ax" text-anchor="end">$4</text>
+<line x1="70" y1="26.0" x2="960" y2="26.0" class="grid"/>
+<text x="58" y="30.0" class="ax" text-anchor="end">$5</text>
+<polygon points="70,248.0 70.0,45.4 366.7,208.3 663.3,224.5 960.0,226.2 960.0,248.0" fill="#1d4ed8" opacity="0.10"/>
+<polyline points="70.0,45.4 366.7,208.3 663.3,224.5 960.0,226.2" fill="none" stroke="#1d4ed8" stroke-width="2.5"/>
+<circle cx="70.0" cy="45.4" r="5.5" fill="#fff" stroke="#1d4ed8" stroke-width="2.5"/>
+<text x="70.0" y="29.4" class="pt" text-anchor="middle">$4.56</text>
+<text x="70.0" y="272.0" class="ax" text-anchor="middle">10가구</text>
+<circle cx="366.7" cy="208.3" r="5.5" fill="#fff" stroke="#1d4ed8" stroke-width="2.5"/>
+<text x="366.7" y="192.3" class="pt" text-anchor="middle">$0.90</text>
+<text x="366.7" y="272.0" class="ax" text-anchor="middle">100가구</text>
+<circle cx="663.3" cy="224.5" r="5.5" fill="#fff" stroke="#1d4ed8" stroke-width="2.5"/>
+<text x="663.3" y="208.5" class="pt" text-anchor="middle">$0.53</text>
+<text x="663.3" y="272.0" class="ax" text-anchor="middle">1,000가구</text>
+<circle cx="960.0" cy="226.2" r="5.5" fill="#fff" stroke="#1d4ed8" stroke-width="2.5"/>
+<text x="960.0" y="210.2" class="pt" text-anchor="middle">$0.49</text>
+<text x="960.0" y="272.0" class="ax" text-anchor="middle">10,000가구</text>
+<text x="58" y="16" class="ax" text-anchor="end">가구당</text>
+</svg>
+  <table>
+    <tr><th>가구</th><th class="n">월 통화</th><th class="n">STT 분</th>
+        <th class="n">고정비</th><th class="n">변동비</th><th class="n">합계</th>
+        <th class="n">가구당</th><th class="n">가구당 KRW</th></tr>
+    <tr><td>10</td><td class="n">40</td><td class="n">960</td><td class="n">$40.75</td>
+        <td class="n">$4.88</td><td class="n">$45.63</td><td class="n">$4.56</td>
+        <td class="n">6,468원</td></tr>
+    <tr><td>100</td><td class="n">400</td><td class="n">9,600</td><td class="n">$40.75</td>
+        <td class="n">$48.78</td><td class="n">$89.53</td><td class="n">$0.90</td>
+        <td class="n">1,269원</td></tr>
+    <tr><td>1,000</td><td class="n">4,000</td><td class="n">96,000</td><td class="n">$40.75</td>
+        <td class="n">$487.80</td><td class="n">$528.55</td><td class="n">$0.53</td>
+        <td class="n">750원</td></tr>
+    <tr><td>10,000</td><td class="n">40,000</td><td class="n">960,000</td><td class="n">$40.75</td>
+        <td class="n">$4,878.00</td><td class="n">$4,918.75</td><td class="n">$0.49</td>
+        <td class="n">697원</td></tr>
+  </table>
+  <div class="note">
+    <strong>이 표는 변동비만 늘린 것이고 인프라 사이징은 들어 있지 않다.</strong>
+    1,000가구에서 고정비 $40.75가 그대로일 수는 없다. 비용을 결정하는 것은 월 통화 총량이
+    아니라 <em>동시 통화 수</em>이며, LiveKit SFU와 Egress는 동시성에 비례해 CPU와 메모리를 쓴다.
+    4 GB 인스턴스가 몇 통화를 동시에 버티는지는 아직 측정하지 않았다. 그 전까지 1,000가구
+    이상 행은 <strong>변동비 하한</strong>으로만 읽어야 한다.
+  </div>
+</section>
+
+<section>
+  <h2>04 &mdash; 감도</h2>
+  <h3>Gemini는 비용 변수가 아니다</h3>
+  <p class="lede">
+    모델과 출력 토큰 수를 어떻게 잡아도 월 $0.76에서 $3.97 사이다. 전체 $107.44 대비
+    최대 3.7%이므로, <strong>모델 선택은 비용 문제가 아니라 추출 품질 문제로 다뤄야 한다.</strong>
+    출력 토큰을 범위로 두는 이유는 thinking 토큰이 출력 예산을 함께 쓰는데 실측하지 않았기 때문이다.
+  </p>
+  <svg class="chart" viewBox="0 0 1000 250" role="img">
+<line x1="60" y1="194.0" x2="970" y2="194.0" class="grid"/>
+<text x="48" y="198.0" class="ax" text-anchor="end">$0</text>
+<line x1="60" y1="156.2" x2="970" y2="156.2" class="grid"/>
+<text x="48" y="160.2" class="ax" text-anchor="end">$1</text>
+<line x1="60" y1="118.4" x2="970" y2="118.4" class="grid"/>
+<text x="48" y="122.4" class="ax" text-anchor="end">$2</text>
+<line x1="60" y1="80.7" x2="970" y2="80.7" class="grid"/>
+<text x="48" y="84.7" class="ax" text-anchor="end">$3</text>
+<line x1="60" y1="42.9" x2="970" y2="42.9" class="grid"/>
+<text x="48" y="46.9" class="ax" text-anchor="end">$4</text>
+<rect x="131.7" y="137.3" width="74" height="56.7" rx="3" fill="#a16207"/>
+<text x="168.7" y="128.3" class="pt" text-anchor="middle">$1.50</text>
+<rect x="217.7" y="165.3" width="74" height="28.7" rx="3" fill="#0e7490"/>
+<text x="254.7" y="156.3" class="pt" text-anchor="middle">$0.76</text>
+<text x="211.7" y="220.0" class="ax" text-anchor="middle">출력 400</text>
+<rect x="435.0" y="92.0" width="74" height="102.0" rx="3" fill="#a16207"/>
+<text x="472.0" y="83.0" class="pt" text-anchor="middle">$2.70</text>
+<rect x="521.0" y="135.1" width="74" height="58.9" rx="3" fill="#0e7490"/>
+<text x="558.0" y="126.1" class="pt" text-anchor="middle">$1.56</text>
+<text x="515.0" y="220.0" class="ax" text-anchor="middle">출력 1,200</text>
+<rect x="738.3" y="44.0" width="74" height="150.0" rx="3" fill="#a16207"/>
+<text x="775.3" y="35.0" class="pt" text-anchor="middle">$3.97</text>
+<rect x="824.3" y="103.0" width="74" height="91.0" rx="3" fill="#0e7490"/>
+<text x="861.3" y="94.0" class="pt" text-anchor="middle">$2.41</text>
+<text x="818.3" y="220.0" class="ax" text-anchor="middle">출력 2,048</text>
+</svg>
+  <p class="legend">
+    <span><i class="sw" style="background:#a16207"></i>gemini-3.6-flash &mdash; 현재 기본값</span>
+    <span><i class="sw" style="background:#0e7490"></i>gemini-3.5-flash-lite &mdash; 비용 대안</span>
+  </p>
+  <p class="lede" style="margin-top:10px">
+    양 참여자 추출로 확장하면 요청 수가 2배가 되어 최대 $7.94가 된다. 2027-01-01부터
+    3.6 Flash 단가가 2배로 오르면 최악 $15.89인데, 그래도 Deepgram의 3분의 1이다.
+  </p>
+</section>
+
+<section>
+  <h2>05 &mdash; 대역폭</h2>
+  <h3>전송량은 걱정거리가 아니다</h3>
+  <p class="lede">
+    Lightsail 허용량은 월 4 TB다. Opus 48 kbps라는 가장 불리한 가정에서도 월 6.91 GB,
+    허용량의 0.17%다. 10,000가구로 늘려도 약 690 GB로 여전히 4 TB 안이다.
+  </p>
+  <svg class="chart" viewBox="0 0 1000 64" role="img">
+<rect x="0" y="20" width="1000" height="26" rx="4" fill="#e3e6ec"/>
+<rect x="0" y="20" width="3.00" height="26" rx="4" fill="#4d7c0f"/>
+<text x="15.0" y="38" class="rb-v">실제 사용 6.91 GB (0.17%)</text>
+<text x="1000" y="14" class="ax" text-anchor="end">허용량 4 TB</text>
+</svg>
+  <p class="lede" style="margin-top:4px">
+    iOS가 올리는 분석용 PCM은 비압축 48 kHz mono int16이라 12분에 약 69 MB로 훨씬 크지만,
+    이것은 <em>인바운드</em>라 아웃바운드만 과금하는 전제에서는 계산에 들어가지 않는다.
+    실제 청구서로 확인해야 하는 전제다.
+  </p>
+</section>
+
+<section>
+  <h2>06 &mdash; 절감</h2>
+  <h3>구조를 바꾸지 않으면 월 $8.25가 한계다</h3>
+  <p class="lede">
+    당장 적용 가능한 세 가지를 다 합쳐야 월 $8.25(11,695원), 전체의 7.7%다.
+    금액이 더 큰 두 가지는 <strong>쓸 수 없는 선택지</strong>다. 회색 바가 그것이다.
+  </p>
+  <svg class="chart" viewBox="0 0 1000 208" role="img">
+<text x="186" y="29.0" class="rb-l" text-anchor="end">Deepgram 연간 선불</text>
+<rect x="200" y="12.0" width="611.45" height="24" rx="3" fill="#c2410c"/>
+<text x="823.45" y="29.0" class="rb-v">$5.76</text>
+<text x="186" y="69.0" class="rb-l" text-anchor="end">Gemini Batch API 전환</text>
+<rect x="200" y="52.0" width="143.31" height="24" rx="3" fill="#a16207"/>
+<text x="355.31" y="69.0" class="rb-v">$1.35</text>
+<text x="186" y="109.0" class="rb-l" text-anchor="end">Gemini Flash-Lite 전환</text>
+<rect x="200" y="92.0" width="121.02" height="24" rx="3" fill="#a16207"/>
+<text x="333.02" y="109.0" class="rb-v">$1.14</text>
+<text x="186" y="149.0" class="rb-l" text-anchor="end">ElevenLabs Free 유지</text>
+<rect x="200" y="132.0" width="636.92" height="24" rx="3" fill="#9aa0ac"/>
+<text x="848.92" y="149.0" class="rb-v">$6.00</text>
+<text x="186" y="189.0" class="rb-l" text-anchor="end">Lightsail IPv6 전용</text>
+<rect x="200" y="172.0" width="424.62" height="24" rx="3" fill="#9aa0ac"/>
+<text x="636.62" y="189.0" class="rb-v">$4.00</text>
+</svg>
+  <table>
+    <tr><th>수단</th><th class="n">월 절감</th><th>판정</th></tr>
+    <tr><td>Deepgram 연간 선불(Growth)</td><td class="n">$5.76</td>
+        <td><strong>조건부.</strong> $0.0048 &rarr; $0.0042/분. 연 $4,000+ 선불이 조건이라
+            100가구 규모에는 맞지 않는다. 1,000가구부터 의미가 있다</td></tr>
+    <tr><td>Gemini Batch API 전환</td><td class="n">$1.35</td>
+        <td><strong>적용 가능.</strong> 통화 후 분석은 실시간이 아니다. 현재 코드가 동기 호출이라
+            파이프라인 수정이 필요하다</td></tr>
+    <tr><td>Gemini Flash-Lite 전환</td><td class="n">$1.14</td>
+        <td><strong>적용 가능하나 권하지 않음.</strong> 40-case eval을 다시 통과해야 하는데
+            절감액이 작아 품질 위험을 감수할 이유가 약하다</td></tr>
+    <tr><td>ElevenLabs Free 유지</td><td class="n">$6.00</td>
+        <td><strong>불가.</strong> 사용량(약 280 credits)으로는 충분하지만 상업적 이용
+            라이선스를 잃는다</td></tr>
+    <tr><td>Lightsail IPv6 전용 인스턴스</td><td class="n">$4.00</td>
+        <td><strong>불가.</strong> iOS 클라이언트와 외부 API가 IPv4를 쓴다</td></tr>
+  </table>
+  <div class="note">
+    <strong>유일하게 의미 있는 수단은 전사 분량을 줄이는 것이고, 그 절감액은 아직 계산할 수 없다.</strong>
+    STT가 변동비의 94%이므로 무음 구간을 잘라 보내면 절감 폭이 위 세 가지를 합친 것보다 클 수 있다.
+    다만 몇 %가 무음인지 측정하지 않았고, word timing 기반 발화 속도·휴지 계산이 영향을 받으므로
+    지표 정의와 함께 결정해야 한다. <em>측정 전에는 숫자를 만들지 않는다.</em>
+  </div>
+  <p class="kicker">
+    결론: 비용을 줄이려면 어떤 모델을 쓰느냐가 아니라 <em>무엇을 몇 분 전사하느냐</em>를 건드려야 한다.
+  </p>
+</section>
+
+<section>
+  <h2>07 &mdash; 신뢰 범위</h2>
+  <h3>이 숫자에서 확인된 것과 가정한 것</h3>
+  <p class="lede">
+    금액을 한 줄로 제시하면 전부 같은 무게로 보인다. 실제로는 단가는 공식 가격표에서 확인했고
+    사용량은 우리가 정한 가정이다. 아래를 섞어 읽으면 안 된다.
+  </p>
+  <div class="two">
+    <div class="box ok">
+      <h4>확인된 단가 &mdash; 2026-08-17 공식 페이지</h4>
+      <ul>
+        <li>Lightsail Medium-4GB(public IPv4) <strong>$24.00/월</strong> &mdash; 2 vCPU / 4 GB / 80 GB / 4 TB</li>
+        <li>Deepgram Nova-3 Monolingual pre-recorded <strong>$0.0048/분</strong>
+            (streaming은 $0.0077, 우리는 배치라 전자)</li>
+        <li>Gemini 3.6 Flash <strong>입력 $0.75 / 출력 $3.75</strong> per 1M (2026-12-31까지)</li>
+        <li>ElevenLabs Starter <strong>$6/월, 30k credits</strong></li>
+        <li>Apple Developer <strong>$99/년</strong></li>
+      </ul>
+    </div>
+    <div class="box guess">
+      <h4>우리가 정한 가정 &mdash; 실측 아님</h4>
+      <ul>
+        <li>가구 수 100, 가구당 월 4회 &mdash; 실사용 빈도는 측정 전이다</li>
+        <li>통화 12분 &mdash; 실측 smoke는 30~42초였다. 12분은 실제 가족 통화 가정</li>
+        <li>Gemini 입력 3,000 / 출력 400~2,048 토큰 &mdash; <strong>미실측</strong></li>
+        <li>Opus 24~48 kbps &mdash; 미실측</li>
+        <li>스냅샷 20 GB, 예비비 20%</li>
+        <li>환율 1 USD = 1,417.53원 &mdash; 2026-08-14 시점 값이며 계속 변한다</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note">
+    <strong>Gemini 무료 tier는 비용 항목이 될 수 없다.</strong> 무료 tier는 토큰이 무료지만
+    요청 내용이 제품 개선에 사용된다. 실제 사용자 건강정보를 다루는 순간 유료 tier가 전제다.
+    이 문서의 모든 Gemini 금액은 유료 tier 단가다.
+  </div>
+</section>
+
+<section>
+  <h2>08 &mdash; 비용에 넣지 않은 것</h2>
+  <h3>지금은 0원이지만 서비스가 되면 생기는 것</h3>
+  <table>
+    <tr><th>항목</th><th>지금 상태</th><th>서비스 전환 시</th></tr>
+    <tr><td>SMS OTP 발송</td><td>개발 OTP <code>000000</code>. provider 없음</td>
+        <td>가입·로그인 건당 변동비가 새로 생긴다</td></tr>
+    <tr><td>모니터링 · 로그 수집</td><td><code>docker compose logs</code>뿐</td>
+        <td>별도 비용. 지금은 장애를 사후에도 못 본다</td></tr>
+    <tr><td>백업 · 이중화</td><td>스냅샷 1개</td>
+        <td>RPO/RTO 목표를 정하면 늘어난다. 단일 인스턴스는 SPOF다</td></tr>
+    <tr><td>관리형 DB · 캐시</td><td>Postgres/Redis/MinIO 모두 self-hosted</td>
+        <td>관리형으로 옮기면 인스턴스 비용과 별개 항목이 된다</td></tr>
+    <tr><td>기침 detector 추론</td><td>같은 인스턴스에서 ONNX, clip당 약 3 ms. 외부 과금 없음</td>
+        <td>지금은 검증 전이라 꺼져 있다. 켜도 과금은 없다</td></tr>
+    <tr><td>가비아 클라우드 (08-18~08-28)</td><td>해커톤 지원분</td>
+        <td>지원 종료 후가 이 문서의 기준이다</td></tr>
+    <tr><td>인건비</td><td>&mdash;</td><td>이 문서는 인프라 비용만 다룬다</td></tr>
+  </table>
+</section>
+
+<footer>
+  계산 근거와 계산식은 <code>backend/docs/operating-cost.html</code>,
+  구성 요소와 포트는 <code>backend/docs/system-architecture.html</code>에 있다.
+  단가는 Lightsail instance bundles 문서, Deepgram Pricing, Gemini API pricing,
+  ElevenLabs Pricing, Apple Developer 멤버십 페이지에서 2026-08-17에 직접 확인했다.
+  환율은 2026-08-14 종가 기준이다. 단가나 가정이 바뀌면 이 파일과 <code>HANDOFF.md</code>를
+  같은 커밋에서 갱신한다.
+</footer>
+
+</div>
+</body>
+</html>

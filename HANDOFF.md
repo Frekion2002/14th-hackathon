@@ -317,6 +317,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `output/pdf/collog-service-proposal-outline.pdf` | 팀 공유·검토용 개조식 서비스 기획안 PDF 산출물 |
 | `backend/docs/system-architecture.html` | 구성 요소·포트·통화/분석 흐름·원본 폐기 구성도. 현재 구현과 권장 운영 구성을 구분 |
 | `backend/docs/operating-cost.html` | 100가구 기준 월 운영비 산정. 공식 단가 출처, 고정비/변동비 분리, 규모별 비용과 감도 분석 |
+| `output/html/collog-operating-cost.html` | 팀 공유·검토용 운영비 시각화. 위 산정 문서와 같은 숫자를 SVG 차트와 원화 병기로 정리. 외부 asset 없이 단독 실행 |
 | `backend/evals/extraction_cases.json` | parent/child/부정/정정/injection 40개 더미 LLM fixture |
 | `backend/scripts/evaluate_extraction.py` | mock/Gemini fixture 평가, 분할/지연 실행 CLI |
 | `backend/scripts/check_apns.py` | APNs 자격증명 점검과 실기기 VoIP push 발송 CLI |
@@ -783,3 +784,9 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   권장 구성으로 나눠 적었다. 운영비는 100가구 월 약 $107(예비비 20% 포함), 가구당 약 $1.07로
   산정했고 변동비의 94%가 Deepgram STT다. 비용을 줄이려면 모델 선택이 아니라 전사 분량을
   건드려야 한다는 결론이다.
+- 2026-08-17: 팀 공유용 운영비 시각화 `output/html/collog-operating-cost.html`를 추가했다.
+  `backend/docs/operating-cost.html`과 같은 숫자를 쓰지만 용도가 다르다. 산정 문서는 계산식과
+  출처가 정본이고, 이 파일은 결론을 먼저 보여주는 발표·검토용이다. 외부 CDN 없이 inline SVG로
+  그려 오프라인에서 열린다. 원화는 2026-08-14 종가 1 USD = 1,417.53원으로 병기했다.
+  절감 수단 중 "무음 제거"는 절감 폭을 측정하지 않았으므로 차트에 숫자를 넣지 않고 별도
+  경고로만 적었다.
