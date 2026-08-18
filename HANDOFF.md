@@ -199,10 +199,6 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 �
   `mip_opt_out=true`를 붙이면 되고 그 경우 데이터는 처리 기간만 보관된다. **다만 opt-out 요율은
   공개되어 있지 않아 비용 영향을 계산할 수 없다.** 실제 사용자 건강정보를 보내기 전에 단가를
   확인하고 코드에 반영할지 결정해야 한다. 해커톤 더미 데이터 구간에서는 문제가 아니다.
-- **8주 seed를 Compose PostgreSQL에서 실행한 기록이 없다.** `tests/test_demo_history.py`는
-  격리 SQLite에서 돌고, 실제 실행 경로는 `docker compose exec backend python -m
-  scripts.seed_demo_history`다. 8/18 배포 후 한 번 돌려 결과를 6절에 남긴다. 절차는
-  `backend/docs/two-iphone-e2e.md`에 있다.
 - **더미 데이터임을 알리는 iOS 화면이 없다.** 리포트 API는 `containsDemoData`와
   `demoDataNotice`를 반환하지만 이를 표시하는 앱 화면이 아직 없다. 데모에서 실제 측정값처럼
   보이지 않게 하는 것이 목적이므로 리포트 화면을 만들 때 반드시 함께 붙인다.
@@ -471,11 +467,36 @@ docker compose config --quiet
 - `tests/test_demo_history.py`는 격리 SQLite에서 8개 ISO 주, ANCHOR/ROLLING 각 4표본,
   두 median 상이, 변화 signal 1건, 최근 5주 history, `containsDemoData=true`, 재실행 후
   통화 8건 유지를 assert한다
-- **미검증**: Compose PostgreSQL에서의 `scripts.seed_demo_history` 실행. 8/18 배포 후에 한다
+- **Compose PostgreSQL 실측 완료 (2026-08-18)**. 아래 2026-08-18 절에 결과가 있다
 - 운영비 문서의 단가는 2026-08-17에 Lightsail bundles 문서, Deepgram Pricing,
   Gemini API pricing, ElevenLabs Pricing, Apple Developer 멤버십 페이지에서 직접 확인했다.
   사용량(가구 수·통화 빈도·통화 길이)과 Gemini 토큰 수는 실측이 아닌 가정이며 문서에 그렇게
   표시했다
+
+2026-08-18 8주 seed Compose PostgreSQL 실측 결과:
+
+- 컨테이너를 `docker compose up -d --build backend`로 새 코드로 재빌드했다. 이전 image는
+  5일 전 것이어서 `app/data/demo_history.json`이 들어 있지 않았다. **seed를 고친 뒤 backend를
+  재빌드하지 않으면 컨테이너는 옛 코드로 돈다.**
+- `python -c "from app.services.demo_seed import load_spec"`가 컨테이너 안에서 동작했다.
+  `packages = ["app"]`로 JSON이 image에 함께 들어간다.
+- `scripts.seed_demo_family` &rarr; `scripts.seed_demo_history` &rarr; `GET
+  /v1/parents/{id}/reports?period=WEEKLY`를 실제 HTTP로 완주했다.
+- PostgreSQL 17 실측치가 격리 SQLite와 완전히 같다. `baselines`에서
+  `AFTERNOON_EVENING/ANCHOR/READY/4/265.0/4.5`, `AFTERNOON_EVENING/ROLLING/READY/4/233.5/8.0`.
+  `acoustic_features`의 metric은 `SPEECH_RATE` 하나뿐이다.
+- `change_signals` 8건 중 W-3~W-0 4건이 유의(-7.5% / -10.2% / -13.6% / -16.6%,
+  robustZ -3.0 / -4.05 / -5.4 / -6.6)하고 W-0에서 승격되어 `summary_text`가
+  `발화 속도 4주 연속 변화, 처음 대비 -17%`다.
+- 리포트 API 응답: `state=READY`, `containsDemoData=true`, 안내 문구 포함,
+  `promotedSignals` 1건, `acuteSignals` 0건, `recentAcousticHistory` 5주(258→221),
+  `repeatObservation` 2회, `conversationItems` 4개 항목 모두 존재.
+- 멱등성: 같은 명령을 2회 더 실행해도 `demo-history-%` 통화 8건, feature 8건, signal 8건,
+  기준선 median 265.0 / 233.5가 그대로다. 누적되지 않는다.
+- `APP_ENV=production`으로 실행하면 `RuntimeError: 시연용 더미 데이터는 production 환경에
+  넣을 수 없습니다`로 거부된다.
+- **주의**: 이 실측은 이 workstation의 Compose stack이며 가비아 서버가 아니다. 가비아에서는
+  `SCHEMA_AUTO_RESET=false`라 빈 DB 첫 기동이 거부되므로 `cloud-deploy.md` 6절 절차를 따른다.
 
 현재 이 Mac에는 Homebrew `docker-compose 5.4.0`, `docker-buildx 0.36.1`,
 `livekit-cli 2.18.2`가 설치되어 있고 `~/.docker/config.json`의 `cliPluginsExtraDirs`가
@@ -861,3 +882,9 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
 - 2026-08-18: 위 검증 중 `acuteSignals`가 항상 0건인 이유를 확인해 3절에 기록했다.
   `process_call()`이 현재 통화를 제외하는데 ROLLING 창 4주와 필요 표본 4가 같아서, 주 1회
   통화로는 `vs_rolling`이 계산될 수 없다. 지표 정의 변경이 필요한 사안이라 코드는 바꾸지 않았다.
+- 2026-08-18: 8주 seed를 Compose PostgreSQL 17에서 실제로 실행해 6절에 실측치를 남겼다.
+  `seed_demo_family` → `seed_demo_history` → 리포트 API를 실제 HTTP로 완주했고, 기준선
+  (ANCHOR 265.0/MAD 4.5, ROLLING 233.5/MAD 8.0)과 승격 signal, 멱등성, production 가드까지
+  격리 SQLite와 같은 결과를 확인했다. 이로써 `의도적으로 미완료`의 "Compose PostgreSQL 실행
+  기록 없음" 항목을 닫았다. 이 과정에서 **backend image를 재빌드하지 않으면 컨테이너가 옛
+  코드로 돈다**는 점을 확인해 6절에 명시했다. 남은 것은 가비아 서버 실측이다.
