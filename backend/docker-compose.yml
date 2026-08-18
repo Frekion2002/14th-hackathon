@@ -127,6 +127,7 @@ services:
       PAUSE_MIN_GAP_MS: ${PAUSE_MIN_GAP_MS:-300}
       PAUSE_MAX_GAP_MS: ${PAUSE_MAX_GAP_MS:-2000}
       ALLOW_RAW_ONLY_ANALYSIS: ${ALLOW_RAW_ONLY_ANALYSIS:-false}
+      LOG_STT_TRANSCRIPT: ${LOG_STT_TRANSCRIPT:-false}
       STORAGE_BACKEND: s3
       S3_ENDPOINT_URL: http://minio:9000
       S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:9000}
@@ -138,6 +139,9 @@ services:
       # Put the ignored AuthKey_*.p8 under backend/private/ and set
       # APNS_PRIVATE_KEY_PATH=/run/secrets/collog/AuthKey_XXXXXXXXXX.p8.
       - ./private:/run/secrets/collog:ro
+      # backend/secrets/에 키를 둔 경우를 위한 경로. 컨테이너에서는 호스트 절대경로가
+      # 존재하지 않으므로 APNS_PRIVATE_KEY_PATH를 이 경로로 지정해야 푸시가 동작한다.
+      - ./secrets:/run/secrets/collog-apns:ro
     ports:
       - "8080:8080"
 

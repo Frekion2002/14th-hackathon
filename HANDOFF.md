@@ -192,7 +192,14 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 �
 - 통화 시작 직후 구간이 분석용 PCM에서 유실될 가능성. writer가 `마이크 publish` 이후에
   부착되므로 받자마자 말하면 앞부분이 빠질 수 있다. 재현 확인이 필요하다.
 - iOS 앱의 초대·동의·질환 프로필 화면. 부모 계정은 백엔드 API로 먼저 만들어야 하며
-  앱에서는 로그인과 수신만 가능하다.
+  앱에서는 로그인과 수신만 가능하다. 2026-08-15에 홈 대시보드·리포트·통화 탭은 붙었지만
+  피그마의 첫 화면/온보딩 3장/로그인(카카오)/동의 확인/본인 프로필 생성/부모 초대/초대
+  확인/초대 수락 화면은 아직 없다.
+- **iOS 타임라인 탭은 빈 화면이다.** 서버에 통화별 health observation 타임라인 endpoint가
+  없어서(implementation-plan-v2 Phase 5) 데이터를 지어내지 않고 준비 중 상태만 표시한다.
+- **홈 히어로의 `+N일차`는 마지막 분석 완료 통화 기준이다.** 피그마의 `전화 주기가 도래했어요`가
+  전제하는 사용자별 목표 통화 주기 설정이 서버에 없다. 주기 설정을 넣기 전까지는 경과일만
+  보여주고 `도래` 판정은 하지 않는다.
 - iOS 토큰 저장은 `UserDefaults`다. 실사용 배포 전 Keychain으로 옮긴다.
 - iOS 통화 화면의 실기기 검증. 빌드와 계약은 맞췄지만 양단 통화, 오디오 라우팅,
   질문 TTS 즉시 중단은 실제 iPhone 2대로 확인해야 한다.
@@ -320,9 +327,15 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `ios/Collog/CollogAPI.swift` | OTP/기기/가족/통화 REST client와 서버 오류 message 파싱 |
 | `ios/Collog/AppSession.swift` | 로그인 세션·가족 구성원 상태. 토큰과 backend URL을 UserDefaults에 보관 |
 | `ios/Collog/RingingQuestionSpeaker.swift` | ElevenLabs remote MP3 상태 관찰·실패 local 폴백·즉시 중단 로그 |
-| `ios/Collog/ContentView.swift` | 로그인 분기, 홈, 개발용 토큰과 복사 가능한 실기기 이벤트 로그 |
+| `ios/Collog/ContentView.swift` | 로그인 분기와 통화 화면 overlay. 로그인 후 화면은 `RootTabView`가 소유 |
+| `ios/Collog/ColloTheme.swift` | 피그마 `일하자`(88:516) Foundation/Typography 토큰. 색·타입 스케일·radius·spacing |
+| `ios/Collog/RootTabView.swift` | 피그마 하단 5탭(홈/통화/리포트/타임라인/설정) 셸과 리포트·설정 탭 |
+| `ios/Collog/HomeDashboardModel.swift` | 홈 대시보드용 subject 선택과 리포트/질문/통화기록 병렬 로드 |
+| `ios/Collog/HomeDashboardView.swift` | 피그마 `홈 대시보드 화면`(98:21586) 구현과 서버 관찰값 바인딩, 추이 그래프 |
 | `ios/Collog/LoginView.swift` | 개발 OTP 로그인과 backend base URL 입력 |
 | `ios/Collog/CallView.swift` | 발신·수신 통화 화면. 오늘의 질문, ElevenLabs/폴백 badge, 종료 버튼 |
+| `ios/Collog/Assets.xcassets/HomeCharacter.imageset` | 홈 히어로 캐릭터. 피그마 export PNG 원본 바이트 |
+| `ios/Collog/Assets.xcassets/IconMyHealth.imageset` | 「우리 가족 건강」 멀티컬러 아이콘(92:990) 피그마 export SVG |
 | `ios/Collog/Collog.entitlements` | `aps-environment` push entitlement |
 | `ios/Collog/Info.plist` | `voip`/`audio`, 마이크·LAN 설명과 개발용 local-network ATS 허용 |
 
@@ -684,6 +697,14 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   경우(`ADDITIVE`)는 데이터를 지우지 않고 그 테이블만 만들고, 기존 테이블이 어긋나면
   (`DRIFTED`) 로컬은 재생성한다. `SCHEMA_AUTO_RESET=false`인 배포 환경에서는 스키마를 전혀
   수정하지 않고 기동을 거부한다. 설계는 `backend/docs/schema-management-design.md`.
+- 2026-08-15: 피그마 `일하자` 페이지(88:516)를 기준으로 iOS 홈 대시보드와 하단 5탭 셸을 구현.
+  Foundation/Typography 토큰을 `ColloTheme.swift`로 분리하고, 홈 카드·리포트 탭 문구를
+  `/parents/{id}/reports`, `/daily-questions`, `/calls`의 실제 응답에만 바인딩했다. 리포트가
+  `READY`가 아니면 변화 문장을 만들지 않고 `기준선 수집 중`을 표시한다. 피그마 카피의
+  `인지 장애 우려` 같은 위험군 라벨과 정적 추이 SVG는 그대로 옮기지 않고, 각각 통화
+  자기보고 항목과 서버 `acousticTrends` 기반 그래프로 대체했다(7절 금지선 유지).
+  `CollogAPI`에 query string 전송 경로를 추가했다. 기존 `appending(path:)`는 `?`를 `%3F`로
+  이스케이프해 query가 붙은 endpoint를 호출할 수 없었다.
 - 2026-08-14: 가비아 클라우드 지원 기간(08-18~08-28)과 사양(2 vCore / 4 GB / 공인 IP 1개)을
   기준으로 배포 제약을 정리. 4 GB에는 `shm_size: 1gb`를 요구하는 LiveKit Egress를 올릴 수
   없어 `ALLOW_RAW_ONLY_ANALYSIS=true` 운영이 전제이며, 그러려면 Phase 2의 양쪽 기기 PCM

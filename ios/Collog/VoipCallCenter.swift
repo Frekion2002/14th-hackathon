@@ -47,6 +47,9 @@ final class VoipCallCenter: NSObject, ObservableObject {
     @Published private(set) var apnsToken: String?
     @Published private(set) var activeCall: ActiveCall?
     @Published private(set) var events: [String] = []
+    // .voiceChat 모드의 기본 출력은 수화기라 소리가 작다. 가족 통화라 하던 일을 하며 받는
+    // 경우가 많아 스피커를 기본으로 둔다. 통화 화면에서 끌 수 있다.
+    @Published private(set) var isSpeakerEnabled = true
 
     private let registry = PKPushRegistry(queue: .main)
     private let callController = CXCallController()
@@ -290,10 +293,33 @@ final class VoipCallCenter: NSObject, ObservableObject {
         }
     }
 
+    // 통화 중 스피커폰 전환. 부모가 손을 못 쓰거나 소리가 작을 때 쓴다.
+    func toggleSpeaker() {
+        isSpeakerEnabled.toggle()
+        applyAudioRoute()
+        log(isSpeakerEnabled ? "스피커폰 켬" : "스피커폰 끔")
+    }
+
+    // CallKit이 세션을 넘겨준 뒤에만 라우팅을 바꿀 수 있다. 통화가 끝나도 세션 category는
+    // .voiceChat으로 남아 다음 통화의 질문 낭독이 수화기로 나가므로, 낭독 직전에도 이 값을
+    // 다시 적용한다.
+    private func applyAudioRoute() {
+        guard isAudioSessionActive else { return }
+        do {
+            try AVAudioSession.sharedInstance()
+                .overrideOutputAudioPort(isSpeakerEnabled ? .speaker : .none)
+        } catch {
+            log("오디오 출력 전환 실패: \(error.localizedDescription)")
+        }
+    }
+
     // 초기 데모에서는 첫 질문만 읽고 나머지는 화면의 참고 질문으로 둔다. 재생 실패가
     // 통화 연결을 막아서는 안 된다.
     private func speakFirstQuestion(_ questions: [CollogAPI.Question]) {
         guard let first = questions.first else { return }
+        // 첫 통화가 아니면 세션이 이전 통화의 .voiceChat 라우팅을 그대로 물고 있어 낭독이
+        // 수화기로 나간다. 낭독 직전에 현재 설정을 다시 적용한다.
+        applyAudioRoute()
         let contract = first.usesRemoteTTS ? "ElevenLabs REMOTE_ASSET" : "iOS LOCAL fallback"
         log("질문 음성 계약: \(contract)")
         speaker.speak(first) { [weak self] message in
@@ -415,6 +441,17 @@ extension VoipCallCenter: CXProviderDelegate {
                 action.fail()
                 return
             }
+            // 수락과 같은 이유로 먼저 fulfill한다. CallKit action 안에서 네트워크를 기다리면
+            // timeout으로 통화가 정리된다.
+            action.fulfill()
+            provider.reportOutgoingCall(with: pending.uuid, startedConnectingAt: nil)
+            activeCall = ActiveCall(
+                id: "",
+                uuid: pending.uuid,
+                direction: .outgoing,
+                peerName: pending.name,
+                phase: .connecting
+            )
             Task {
                 do {
                     let created = try await CollogAPI.createCall(calleeId: pending.calleeId)
@@ -428,8 +465,6 @@ extension VoipCallCenter: CXProviderDelegate {
                         questions: created.questions,
                         notice: created.recordingEnabled ? nil : created.recordingDisabledMessage
                     )
-                    action.fulfill()
-                    provider.reportOutgoingCall(with: pending.uuid, startedConnectingAt: nil)
                     try await connectMedia(
                         url: created.livekitUrl,
                         token: created.accessToken,
@@ -440,8 +475,7 @@ extension VoipCallCenter: CXProviderDelegate {
                     speakFirstQuestion(created.questions)
                 } catch {
                     log("발신 실패: \(error.localizedDescription)")
-                    action.fail()
-                    teardown()
+                    endActiveCall()
                 }
             }
         }
@@ -455,6 +489,10 @@ extension VoipCallCenter: CXProviderDelegate {
             }
             activeCall?.phase = .connecting
             answeredCallIds.insert(call.id)
+            // CallKit action은 몇 초 안에 끝나야 한다. /accept 왕복과 LiveKit 접속을 기다린
+            // 뒤에 fulfill하면 CallKit이 timeout으로 통화를 정리해 오디오 세션까지 내린다.
+            // 수락 자체는 즉시 보고하고, 실제 연결은 뒤에서 진행한다.
+            action.fulfill()
             Task {
                 do {
                     let accepted = try await CollogAPI.accept(callId: call.id)
@@ -466,12 +504,11 @@ extension VoipCallCenter: CXProviderDelegate {
                         constraints: accepted.audioConstraints
                     )
                     activeCall?.phase = .active
-                    action.fulfill()
                     log("수락 완료: \(call.id)")
                 } catch {
+                    // 이미 fulfill했으므로 실패는 통화 종료로 알린다.
                     log("수락 실패: \(error.localizedDescription)")
-                    action.fail()
-                    teardown()
+                    endActiveCall()
                 }
             }
         }
@@ -482,7 +519,9 @@ extension VoipCallCenter: CXProviderDelegate {
             let call = activeCall
             action.fulfill()
             teardown()
-            guard let call else { return }
+            // 발신은 POST /calls 응답이 오기 전까지 통화 ID가 없다. 그 사이 종료하면
+            // 서버에 보고할 대상이 없으므로 로컬 정리만 한다.
+            guard let call, !call.id.isEmpty else { return }
             let answered = call.direction == .outgoing || answeredCallIds.contains(call.id)
             answeredCallIds.remove(call.id)
             Task {
@@ -510,6 +549,7 @@ extension VoipCallCenter: CXProviderDelegate {
                 )
                 setEngine(.default)
                 isAudioSessionActive = true
+                applyAudioRoute()
                 log("오디오 세션 활성화")
                 publishMicrophoneIfReady()
             } catch {

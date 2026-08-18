@@ -121,6 +121,10 @@ class Settings(BaseSettings):
     pause_min_gap_ms: int = 300
     pause_max_gap_ms: int = 2_000
 
+    # STT 결과를 서버 로그로 확인하기 위한 개발용 스위치. transcript 원문은 건강 관련
+    # 민감정보이므로 요약 통계만 항상 남기고, 발화 텍스트는 이 값이 true일 때만 남긴다.
+    log_stt_transcript: bool = False
+
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     team_portal_enabled: bool = True
     team_portal_repository_url: str = "https://github.com/Frekion2002/14th-hackathon"

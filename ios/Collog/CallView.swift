@@ -65,6 +65,22 @@ struct CallView: View {
             Spacer()
 
             Button {
+                callCenter.toggleSpeaker()
+            } label: {
+                Label(
+                    callCenter.isSpeakerEnabled ? "스피커폰 켜짐" : "스피커폰 꺼짐",
+                    systemImage: callCenter.isSpeakerEnabled
+                        ? "speaker.wave.3.fill" : "speaker.slash.fill"
+                )
+                .font(.title3.bold())
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+            }
+            .buttonStyle(.bordered)
+            .tint(callCenter.isSpeakerEnabled ? .accentColor : .secondary)
+            .padding(.horizontal)
+
+            Button {
                 callCenter.endActiveCall()
             } label: {
                 Label("통화 종료", systemImage: "phone.down.fill")
