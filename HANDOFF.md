@@ -1,6 +1,6 @@
 # 콜록(Collog) 개발 HANDOFF
 
-마지막 갱신: 2026-08-17 (Asia/Seoul)
+마지막 갱신: 2026-08-18 (Asia/Seoul)
 
 이 문서는 콜록 개발의 단일 인수인계 기준이다. 구현, 계약, 검증 결과, 미완료 항목이 바뀌면
 코드와 같은 커밋에서 반드시 이 문서를 갱신한다. 비밀키와 실제 건강정보는 기록하지 않는다.
@@ -209,9 +209,17 @@ STT/LLM/음향 파이프라인이 끝까지 도는 것을 확인했다. 다만 �
 - **seed는 데모 당일 아침에 다시 실행한다.** 상대 날짜로 만들지만 며칠이 지나면 가장 이른 주가
   ROLLING 창 밖으로 밀리고 W-0이 비어 `COLLECTING`으로 떨어진다. 재실행은 `demo-history-*`만
   교체하므로 안전하다.
-- **seed가 만드는 기준선은 `MORNING` time slot 하나뿐이다.** 데모 통화를 다른 time slot에
-  하면 그 slot에는 기준선이 없어 변화 signal이 나오지 않는다. 데모는 오전에 하거나
-  `demo_seed.py`의 `TimeSlot`을 맞춰야 한다.
+- **acute(vs_rolling) signal은 주 1회 통화로는 구조적으로 나오지 않는다.**
+  `process_call()`이 현재 통화를 자기 기준선에서 제외하는데 ROLLING 창은 4주(W-3~W-0)이고
+  `baseline_required_samples`도 4다. 주 1회면 현재 통화를 빼면 3표본이라 ROLLING이
+  `COLLECTING`으로 떨어지고 `vs_rolling`이 `None`이 된다. 8주 seed도 `acuteSignals`가 0건이며
+  이는 버그가 아니다. 같은 주에 통화가 2건이면 두 번째 통화에서 ROLLING이 4표본이 되어 계산된다.
+  데모에서 acute까지 보여야 하면 W-0 항목을 하나 더 넣고 값을 216 아래로 둔다.
+  **지표 정의 변경이므로 코드는 건드리지 않고 결정 사항으로 남긴다.**
+- **seed는 spec의 time slot 하나에만 기준선을 만든다.** 현재 spec은 전부
+  `AFTERNOON_EVENING`이므로 데모 통화도 같은 시간대여야 한다. 다른 시간대에 통화하면 그 slot에는
+  기준선이 없어 변화 signal이 나오지 않는다. `app/data/demo_history.json`의 `timeSlot`을 바꾸거나
+  데모 시간대를 맞춘다.
 - SMS OTP 실제 발송 provider. 개발 OTP는 `000000`이다.
 - ElevenLabs 실제 key/voice ID를 `.env`에 넣어 한국어 음색을 선택하고, 실기기에서 remote MP3
   재생과 상대 수락 즉시 중단을 확인해야 한다. 생성·storage 실패 시 local TTS 폴백은 test 완료다.
@@ -333,7 +341,8 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/scripts/preflight_two_iphone.py` | LAN 주소/provider/APNs/MinIO의 통화 전 비밀값 없는 사전 판정 |
 | `backend/scripts/verify_two_iphone_call.py` | 최신/지정 통화의 양 Track Egress, 양 화자 STT, AI-2, purge 자동 판정 |
 | `backend/scripts/seed_demo_family.py` | 개발 OTP로 자녀-부모 초대·수락·동의·질환 프로필 생성 CLI |
-| `backend/scripts/seed_demo_history.py` | DB에 직접 접속해 8주 더미 이력을 만드는 CLI. `--parent-id`/`--child-id` 필수 |
+| `backend/app/data/demo_history.json` | 8주 데모 seed의 주별 내용. `weekOffset`/`timeSlot`/`askedQuestionIds`/`speechRate`/`selfReport`. 코드에 하드코딩하지 않는다 |
+| `backend/scripts/seed_demo_history.py` | DB에 직접 접속해 8주 더미 이력을 만드는 CLI. `--parent-id`/`--child-id` 필수, `--spec`으로 다른 JSON 지정 |
 | `backend/scripts/replay_call.py` | Egress 없이 로컬 오디오로 STT/LLM/음향 파이프라인 실행 CLI |
 | `backend/scripts/acoustic_quality_report.py` | 음향 지표 측정 성공률과 실패 사유 분포 집계 CLI |
 | `backend/deploy/livekit-local.yaml` | Docker 없이 실행하는 단일 노드 LiveKit 설정. Egress 없음 |
@@ -343,7 +352,7 @@ APNs payload에는 `callId/callUUID/callerId/callerName/expiresAt`만 넣는다.
 | `backend/tests/test_ai_pipeline.py` | prompt/repeat/acoustic/calendar-week deterministic test |
 | `backend/tests/test_tts.py` | ElevenLabs 요청 계약, cache/서명 URL, 장애 local 폴백 test |
 | `backend/tests/test_schema_guard.py` | 스키마 판정, ADDITIVE 데이터 보존, DRIFTED 재생성, 배포 기동 거부 test |
-| `backend/tests/test_demo_history.py` | 8개 ISO 주, anchor/rolling 분리, 발화 속도만 seed, 재실행 시 중복 없음 test |
+| `backend/tests/test_demo_history.py` | 8개 ISO 주, anchor/rolling 분리, 승격 signal, spec 검증(MAD=0·미등록 questionId·W-0 누락·잘못된 timeSlot 거부) test |
 | `backend/tests/conftest.py` | 격리 SQLite와 mock provider test app fixture |
 | `backend/pyproject.toml` | Python 의존성, ruff/pytest/build 설정 |
 | `backend/uv.lock` | 재현 가능한 dependency lock |
@@ -835,3 +844,20 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   임을 문서에 남겼다. BAA는 Enterprise 고객에게만 제공된다. 한국 서비스에 HIPAA가 직접
   적용되는지는 법무 판단이 필요하지만, 미국 사용자를 받으면 공개 단가가 아니라 Enterprise
   협상가가 되므로 운영비 모델 자체가 달라진다.
+- 2026-08-18: 8주 데모 seed의 주별 내용을 코드에서 분리해 `app/data/demo_history.json`으로
+  옮겼다. `demo_seed.py`의 `DEFAULT_SPEECH_RATE_SERIES`와 `_extraction_for_week()`를 제거하고
+  `load_spec()`이 JSON을 읽어 검증한다. 검증 항목은 time slot 유효값, 질문 pool에 있는
+  questionId, `weekOffset` 중복·미래 주 금지, 이번 주(0) 포함, 값이 전부 같은지(MAD=0),
+  `selfReport` 4개 필드 존재다. 잘못된 spec은 조용히 통과하지 않고 실행을 거부한다.
+  틀린 spec은 리포트가 정상처럼 보이면서 기준선이 없는 상태를 만들기 때문에 hard fail로 했다.
+  `scripts/seed_demo_history.py`에 `--spec` 옵션을 추가했다.
+- 2026-08-18: seed 내용을 데모 시나리오에 맞춰 교체했다. time slot을 `MORNING`에서
+  `AFTERNOON_EVENING`으로, 발화 속도를 초기 4주 268/262/271/258, 최근 4주 245/238/229/221로
+  바꿨다. 실측 결과 ANCHOR median 265.0(MAD 4.5), ROLLING median 233.5(MAD 8.0)로 둘 다
+  `READY`이고, W-3부터 4주 연속 유의한 하락이 잡혀 W-0에서 승격 signal
+  `발화 속도 4주 연속 변화, 처음 대비 -17%`가 나온다. 자기보고는 "말했다/언급했다/답했다"로만
+  적어 원인 추정과 진단·위험도 표현을 넣지 않았다. `askedQuestionIds`는 기존 질문 pool의 ID만
+  쓴다.
+- 2026-08-18: 위 검증 중 `acuteSignals`가 항상 0건인 이유를 확인해 3절에 기록했다.
+  `process_call()`이 현재 통화를 제외하는데 ROLLING 창 4주와 필요 표본 4가 같아서, 주 1회
+  통화로는 `vs_rolling`이 계산될 수 없다. 지표 정의 변경이 필요한 사안이라 코드는 바꾸지 않았다.

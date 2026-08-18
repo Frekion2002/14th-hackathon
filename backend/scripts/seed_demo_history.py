@@ -10,7 +10,7 @@ from app.database import Database
 from app.services.demo_seed import replace_demo_history
 
 
-async def seed(parent_id: str, child_id: str) -> int:
+async def seed(parent_id: str, child_id: str, spec_path: str | None) -> int:
     settings = Settings()
     database = Database(settings.database_url)
     try:
@@ -20,6 +20,7 @@ async def seed(parent_id: str, child_id: str) -> int:
                 parent_id=parent_id,
                 child_id=child_id,
                 settings=settings,
+                spec_path=spec_path,
             )
     finally:
         await database.close()
@@ -36,8 +37,13 @@ def main() -> None:
     )
     parser.add_argument("--parent-id", required=True)
     parser.add_argument("--child-id", required=True)
+    parser.add_argument(
+        "--spec",
+        default=None,
+        help="주별 내용 JSON 경로. 생략하면 app/data/demo_history.json을 쓴다",
+    )
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(seed(args.parent_id, args.child_id)))
+    raise SystemExit(asyncio.run(seed(args.parent_id, args.child_id, args.spec)))
 
 
 if __name__ == "__main__":

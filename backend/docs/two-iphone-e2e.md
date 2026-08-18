@@ -142,8 +142,31 @@ docker compose exec backend python -m scripts.seed_demo_history \
   --child-id <childUserId>
 ```
 
+주별 내용은 코드가 아니라 `backend/app/data/demo_history.json`에 있다. 8개 항목이 `weekOffset`
+-7 ~ 0이고 `timeSlot`은 전부 `AFTERNOON_EVENING`, `speechRate`는 초기 4주 255~275에서 최근 4주
+245 → 220으로 내려간다. 다른 시간대나 값으로 시연하려면 이 파일을 고치거나 `--spec <경로>`로
+다른 파일을 넘긴다. `load_spec()`이 time slot, 질문 ID, 이번 주 포함 여부, 값이 전부 같은지
+(MAD=0)를 미리 검사하고 틀리면 실행을 거부한다.
+
 기침·휴지·F0는 검증된 값처럼 꾸미지 않고, 실제 파이프라인에서 동작한 발화 속도만 넣는다.
 리포트 응답에는 `containsDemoData=true`와 안내 문구가 포함된다.
+
+결과로 나오는 것은 다음과 같다. 이 값이 안 나오면 seed가 아니라 설정을 의심한다.
+
+| 항목 | 값 |
+|---|---|
+| ANCHOR 기준선 | `READY`, 표본 4, median 265.0 음절/분, MAD 4.5 |
+| ROLLING 기준선 | `READY`, 표본 4, median 233.5 음절/분, MAD 8.0 |
+| 승격 signal | 1건. `발화 속도 4주 연속 변화, 처음 대비 -17%` |
+| acute signal | **0건.** 주 1회 통화로는 구조적으로 나오지 않는다(아래) |
+| 리포트 state | `READY` |
+
+`acuteSignals`가 비는 것은 버그가 아니다. `SignalService.process_call()`이 현재 통화를 자기
+기준선에서 제외하는데 ROLLING 창은 4주(W-3~W-0)이고 필요 표본도 4다. 주 1회면 현재 통화를
+빼면 3표본이 되어 ROLLING이 `COLLECTING`으로 떨어진다. 같은 주에 통화가 2건이면 두 번째
+통화에서 ROLLING이 4표본이 되어 acute가 계산된다. 데모에서 acute까지 보여야 하면 W-0에
+항목을 하나 더 넣고 값을 216 아래로 둔다(현재 ROLLING median 233.5, MAD 8.0 기준
+`|0.6745 x (v - 233.5) / 8| > 1.5`).
 
 ## 5. 두 iPhone 설치와 로그인
 
