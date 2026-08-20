@@ -888,3 +888,8 @@ API를 바꿀 때에는 기존 camelCase 계약과 테스트를 유지하고, �
   격리 SQLite와 같은 결과를 확인했다. 이로써 `의도적으로 미완료`의 "Compose PostgreSQL 실행
   기록 없음" 항목을 닫았다. 이 과정에서 **backend image를 재빌드하지 않으면 컨테이너가 옛
   코드로 돈다**는 점을 확인해 6절에 명시했다. 남은 것은 가비아 서버 실측이다.
+- 2026-08-20: 저장소를 `Frekion2002/14th-hackathon`에서 조직 `Collog-App/14th-hackathon`으로
+  전송했다. 브랜치 8개와 PR #1은 그대로 넘어왔고 구 URL은 GitHub이 리다이렉트한다. 코드·문서의
+  `TEAM_PORTAL_REPOSITORY_URL` 기본값(`.env.example`, `docker-compose.yml`, `config.py`),
+  `cloud-deploy.md`의 clone 주소, 구성도 HTML의 저장소 표기를 새 주소로 바꿨다. 팀원은 각자
+  `git remote set-url origin https://github.com/Collog-App/14th-hackathon.git`을 실행한다.

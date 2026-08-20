@@ -65,7 +65,7 @@ Ubuntu 24.04 기준이다.
 ```bash
 sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2 git
 sudo usermod -aG docker $USER && exec sudo su - $USER
-git clone https://github.com/Frekion2002/14th-hackathon.git
+git clone https://github.com/Collog-App/14th-hackathon.git
 cd 14th-hackathon/backend
 ```
 
