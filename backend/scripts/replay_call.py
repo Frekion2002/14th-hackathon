@@ -39,6 +39,34 @@ class ReplayError(RuntimeError):
     pass
 
 
+TERMINAL_STATES = {
+    CallState.ANALYZED.value,
+    CallState.ANALYSIS_EXCLUDED.value,
+    CallState.ANALYSIS_FAILED.value,
+}
+
+
+async def wait_for_terminal_state(
+    container: AppContainer, call_id: str, timeout_seconds: float = 300.0
+) -> str | None:
+    """분석이 끝날 때까지 기다린다.
+
+    통화를 실제로 분석하는 쪽은 이 스크립트일 수도, 백엔드의 cleanup_loop일 수도 있다.
+    (둘 중 먼저 PROCESSING을 선점한 쪽이 맡는다.) 선점당하면 `pipeline.process`가 즉시
+    돌아오므로, 바로 상태를 읽으면 아직 PROCESSING인 것을 보고 실패로 오해한다.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        async with container.database.sessions() as session:
+            state = await session.scalar(select(CallRecord.state).where(CallRecord.id == call_id))
+        if state in TERMINAL_STATES:
+            return state
+        if asyncio.get_running_loop().time() >= deadline:
+            print(f"경고: {timeout_seconds:.0f}초 안에 분석이 끝나지 않았습니다 (state={state})")
+            return state
+        await asyncio.sleep(2)
+
+
 def audio_meta(path: Path) -> tuple[str, float | None, int | None]:
     content_type = CONTENT_TYPES.get(path.suffix.lower())
     if content_type is None:
@@ -71,7 +99,9 @@ async def replay(args: argparse.Namespace) -> int:
     if settings.mock_external_services:
         print("경고: MOCK_EXTERNAL_SERVICES=true 입니다. 실제 Deepgram/Gemini를 호출하지 않습니다.")
     container = AppContainer(settings)
-    await container.database.create_all()
+    # 스키마 소유자는 백엔드 기동(main.py)이다. replay는 이미 맞춰진 DB에 붙는 것이므로
+    # auto_reset=False로 검사만 한다. True로 두면 drift 판정 시 개발 DB를 통째로 지운다.
+    await container.database.ensure_schema(auto_reset=False)
 
     async with container.database.sessions() as session:
         child = await session.scalar(select(User).where(User.phone == args.child_phone))
@@ -140,6 +170,7 @@ async def replay(args: argparse.Namespace) -> int:
 
     print("파이프라인 실행 중… Deepgram STT → 되묻기 → Gemini → 음향 → 기준선")
     await container.pipeline.process(call_id)
+    await wait_for_terminal_state(container, call_id)
 
     async with container.database.sessions() as session:
         call = await session.get(CallRecord, call_id)

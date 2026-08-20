@@ -10,8 +10,33 @@ struct LoginView: View {
     @State private var code = ""
     @State private var otpSent = false
 
+    /// `scripts/seed_demo_family.py`가 만드는 개발용 계정. 매번 손으로 치지 않도록 둔다.
+    private static let demoAccounts: [(label: String, name: String, phone: String, role: String)] = [
+        ("어머니", "어머니", "01000000010", "PARENT"),
+        ("자녀", "자녀", "01000000002", "CHILD"),
+    ]
+
     var body: some View {
         Form {
+            Section("데모 계정") {
+                HStack(spacing: Collo.Space.s2) {
+                    ForEach(Self.demoAccounts, id: \.phone) { account in
+                        Button(account.label) {
+                            name = account.name
+                            phone = account.phone
+                            role = account.role
+                            otpSent = false
+                            code = ""
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(otpSent)
+                    }
+                }
+                Text("시드 스크립트가 만든 계정이다. 인증번호는 000000이다.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("역할") {
                 Picker("역할", selection: $role) {
                     Text("자녀").tag("CHILD")

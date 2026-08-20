@@ -318,5 +318,7 @@ def signal_to_dict(item: ChangeSignal) -> dict[str, Any]:
         "acute": item.acute,
         "summaryText": item.summary_text,
         "acuteText": item.acute_text,
-        "observedAt": item.observed_at,
+        # 이 dict는 API 응답이면서 동시에 Report.snapshot(JSON 컬럼)에 그대로 저장된다.
+        # datetime을 그대로 두면 json.dumps가 스냅샷 INSERT에서 터지므로 문자열로 낸다.
+        "observedAt": item.observed_at.isoformat(),
     }

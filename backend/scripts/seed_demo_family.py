@@ -103,6 +103,19 @@ async def seed(args: argparse.Namespace) -> int:
             child_token,
         )
 
+        # 가족 목록·피커가 한 명뿐이면 화면을 확인하기 어렵다. 계정 없이 초대만 된
+        # 구성원을 하나 더 만들어 「초대 중」 상태까지 눈으로 볼 수 있게 한다. userId가
+        # 비어 있으므로 홈 대시보드의 기본 대상은 그대로 부모다.
+        if args.extra_member_name:
+            current = await get(client, f"/v1/families/{family_id}/members", child_token)
+            if args.extra_member_name not in {m["name"] for m in current["members"]}:
+                await post(
+                    client,
+                    f"/v1/families/{family_id}/invitations",
+                    {"name": args.extra_member_name, "relation": args.extra_member_relation},
+                    child_token,
+                )
+
         members = await get(client, f"/v1/families/{family_id}/members", child_token)
         questions = await get(
             client, f"/v1/parents/{parent_id}/daily-questions", child_token
@@ -137,6 +150,14 @@ def main() -> None:
     parser.add_argument("--parent-phone", default="01000000010")
     parser.add_argument("--parent-name", default="어머니")
     parser.add_argument("--relation", choices=["MOTHER", "FATHER"], default="MOTHER")
+    parser.add_argument(
+        "--extra-member-name",
+        default="아버지",
+        help="계정 없이 초대만 걸어둘 구성원. 빈 문자열이면 만들지 않는다",
+    )
+    parser.add_argument(
+        "--extra-member-relation", choices=["MOTHER", "FATHER"], default="FATHER"
+    )
     parser.add_argument("--otp", default="000000")
     parser.add_argument(
         "--conditions",

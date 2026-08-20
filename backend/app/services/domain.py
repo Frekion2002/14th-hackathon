@@ -13,11 +13,33 @@ from app.models import (
     FamilyMember,
     Invitation,
     User,
+    UserRole,
 )
 
 
 async def family_for_child(session: AsyncSession, child_id: str) -> Family | None:
     return await session.scalar(select(Family).where(Family.created_by == child_id))
+
+
+async def family_for_parent(session: AsyncSession, parent_id: str) -> Family | None:
+    """초대를 수락해 구성원이 된 부모의 가족.
+
+    자녀는 가족을 만든 사람이라 `Family.created_by`로 찾지만, 부모는 `FamilyMember`로만
+    연결되므로 그쪽을 거쳐야 한다.
+    """
+    return await session.scalar(
+        select(Family)
+        .join(FamilyMember, FamilyMember.family_id == Family.id)
+        .where(FamilyMember.user_id == parent_id)
+        .order_by(FamilyMember.invited_at)
+        .limit(1)
+    )
+
+
+async def family_of(session: AsyncSession, user: User) -> Family | None:
+    if user.role == UserRole.CHILD.value:
+        return await family_for_child(session, user.id)
+    return await family_for_parent(session, user.id)
 
 
 async def latest_consent(session: AsyncSession, parent_id: str) -> ConsentRecord | None:

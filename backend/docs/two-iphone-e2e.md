@@ -132,41 +132,41 @@ uv run python -m scripts.seed_demo_family \
 
 개발 OTP는 `000000`이다. 실데이터 대신 위 더미 계정을 사용한다.
 
-가족 seed 출력의 `parentUserId`, `childUserId`를 사용해 주간 리포트에 필요한 8개 ISO 주의
-시연용 통화도 만든다. 이 명령은 DB에 직접 접근하므로 Compose에서는 backend 컨테이너 안에서
-실행한다. 재실행하면 이전 `demo-history-*` 통화만 교체한다.
+주간 리포트에 필요한 8개 ISO 주의 시연용 통화도 만든다. 이 명령은 DB에 직접 접근하므로
+Compose에서는 backend 컨테이너 안에서 실행한다. 재실행하면 이전 `narrative-*` 통화만 교체한다.
 
 ```bash
-docker compose exec backend python -m scripts.seed_demo_history \
-  --parent-id <parentUserId> \
-  --child-id <childUserId>
+docker compose exec backend python -m scripts.seed_narrative_history
 ```
 
-주별 내용은 코드가 아니라 `backend/app/data/demo_history.json`에 있다. 8개 항목이 `weekOffset`
--7 ~ 0이고 `timeSlot`은 전부 `AFTERNOON_EVENING`, `speechRate`는 초기 4주 255~275에서 최근 4주
-245 → 220으로 내려간다. 다른 시간대나 값으로 시연하려면 이 파일을 고치거나 `--spec <경로>`로
-다른 파일을 넘긴다. `load_spec()`이 time slot, 질문 ID, 이번 주 포함 여부, 값이 전부 같은지
-(MAD=0)를 미리 검사하고 틀리면 실행을 거부한다.
+전화번호 기본값이 위 가족 seed와 같으므로(`--parent-phone 01000000010`,
+`--child-phone 01000000002`) 인자 없이 실행된다. 주별 내용은 코드가 아니라
+`backend/scripts/data/narrative_history.json`에 있다. 8개 항목이 `weekOffset` -7 ~ 0이고
+`timeSlot`은 전부 `AFTERNOON_EVENING`, `speechRate`는 초기 4주 259~273에서 최근 4주
+245 → 221로 내려간다. 다른 시간대나 값으로 시연하려면 이 파일을 고치거나 `--data <경로>`로
+다른 파일을 넘긴다.
+
+`seed_mock_history.py`는 음성 합성부터 실제 파이프라인을 태우므로 값을 지정할 수 없고 외부 API
+할당량에 걸린다. 화면 확인 목적이면 위 `seed_narrative_history.py`를 쓴다.
 
 기침·휴지·F0는 검증된 값처럼 꾸미지 않고, 실제 파이프라인에서 동작한 발화 속도만 넣는다.
-리포트 응답에는 `containsDemoData=true`와 안내 문구가 포함된다.
 
-결과로 나오는 것은 다음과 같다. 이 값이 안 나오면 seed가 아니라 설정을 의심한다.
+2026-08-20 PostgreSQL 실측 결과다. 이 값이 안 나오면 seed가 아니라 설정을 의심한다.
 
 | 항목 | 값 |
 |---|---|
-| ANCHOR 기준선 | `READY`, 표본 4, median 265.0 음절/분, MAD 4.5 |
-| ROLLING 기준선 | `READY`, 표본 4, median 233.5 음절/분, MAD 8.0 |
+| 통화 | 8건, 전부 `AFTERNOON_EVENING` |
+| 발화 속도 | 268 / 259 / 273 / 262 → 245 / 238 / 229 / 221 음절/분 |
 | 승격 signal | 1건. `발화 속도 4주 연속 변화, 처음 대비 -17%` |
 | acute signal | **0건.** 주 1회 통화로는 구조적으로 나오지 않는다(아래) |
-| 리포트 state | `READY` |
+| 리포트 state | `READY`, HTTP 200 |
 
 `acuteSignals`가 비는 것은 버그가 아니다. `SignalService.process_call()`이 현재 통화를 자기
 기준선에서 제외하는데 ROLLING 창은 4주(W-3~W-0)이고 필요 표본도 4다. 주 1회면 현재 통화를
 빼면 3표본이 되어 ROLLING이 `COLLECTING`으로 떨어진다. 같은 주에 통화가 2건이면 두 번째
-통화에서 ROLLING이 4표본이 되어 acute가 계산된다. 데모에서 acute까지 보여야 하면 W-0에
-항목을 하나 더 넣고 값을 216 아래로 둔다(현재 ROLLING median 233.5, MAD 8.0 기준
-`|0.6745 x (v - 233.5) / 8| > 1.5`).
+통화에서 ROLLING이 4표본이 되어 acute가 계산된다. 데모에서 acute까지 보여야 하면 W-0 주에
+항목을 하나 더 넣고 값을 그 시점 ROLLING median에서 충분히 떨어뜨린다
+(`|0.6745 x (v - median) / MAD| > 1.5`).
 
 ## 5. 두 iPhone 설치와 로그인
 

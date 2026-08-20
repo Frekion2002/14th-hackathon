@@ -68,6 +68,7 @@ from app.services.domain import (
     ensure_child_can_access_parent,
     ensure_report_access,
     family_for_child,
+    family_of,
     has_consent,
     latest_consent,
     latest_invitation,
@@ -212,7 +213,9 @@ async def verify_otp(payload: OtpVerify, request: Request, session: SessionDep) 
         )
         session.add(user)
         await session.flush()
-    family = await family_for_child(session, user.id) if user.role == UserRole.CHILD.value else None
+    # 부모도 초대를 수락하면 가족에 속한다. 자녀에게만 familyId를 주면 부모 계정에서는
+    # 가족 목록을 아예 불러올 수 없다(앱 `AppSession.refreshMembers`가 familyId로 막힌다).
+    family = await family_of(session, user)
     if user.role == UserRole.CHILD.value and family is None:
         family = Family(created_by=user.id)
         session.add(family)
@@ -328,8 +331,9 @@ async def get_members(
     user: CurrentUser,
     session: SessionDep,
 ) -> dict:
-    require_role(user, UserRole.CHILD)
-    family = await family_for_child(session, user.id)
+    # 구성원 목록은 그 가족에 속한 사람이면 볼 수 있다. 자녀는 가족을 만든 사람으로,
+    # 부모는 초대를 수락한 구성원으로 확인한다.
+    family = await family_of(session, user)
     if family is None or family.id != family_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "가족 접근 권한이 없습니다")
     members = list(

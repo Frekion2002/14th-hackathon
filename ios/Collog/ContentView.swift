@@ -6,152 +6,76 @@
 //
 
 import SwiftUI
-import UIKit
 
+// 앱 진입 흐름: 온보딩(첫 실행만) → 로그인 → 동의 → 홈 5탭.
+//
+// 동의는 앱 최초 온보딩의 완료 조건이다. 동의가 없거나 철회되면 홈/통화에 들여보내지 않고
+// 동의 화면으로 돌린다. (HANDOFF 1절, implementation-plan-v2「인증·초대·동의」)
 struct ContentView: View {
     @ObservedObject private var session = AppSession.shared
     @ObservedObject private var callCenter = VoipCallCenter.shared
 
+    @AppStorage("collog.onboardingDone") private var onboardingDone = false
+    @State private var consentState: ConsentState = .unknown
+
+    enum ConsentState {
+        case unknown
+        case granted
+        case missing
+        /// 자녀 계정처럼 동의 주체가 아닌 경우. 동의 화면으로 보내지 않는다.
+        case notRequired
+    }
+
     var body: some View {
-        NavigationStack {
-            if session.isLoggedIn {
-                HomeView()
+        Group {
+            if !onboardingDone {
+                OnboardingView()
+            } else if !session.isLoggedIn {
+                NavigationStack { LoginView() }
             } else {
-                LoginView()
+                switch consentState {
+                case .unknown:
+                    ProgressView("확인 중…")
+                case .missing:
+                    NavigationStack {
+                        ConsentView { consentState = .granted }
+                    }
+                case .granted, .notRequired:
+                    RootTabView()
+                }
             }
         }
         // 통화가 시작되면 어느 화면에 있든 통화 화면을 덮어씌운다.
         .fullScreenCover(item: callBinding) { call in
             CallView(initialCall: call)
         }
+        .task(id: session.user?.id) { await refreshConsent() }
+    }
+
+    private func refreshConsent() async {
+        guard session.isLoggedIn else {
+            consentState = .unknown
+            return
+        }
+        // 동의는 건강정보 당사자인 부모의 것이다. 서버도 `POST /v1/consents`를 PARENT로만
+        // 받으므로(api.py `submit_consent`), 자녀를 이 게이트에 세우면 동의 화면에서
+        // 403을 받고 영영 못 넘어간다.
+        guard session.user?.role == "PARENT" else {
+            consentState = .notRequired
+            return
+        }
+        do {
+            let record = try await CollogAPI.myConsent()
+            consentState = (record?.isGranted == true) ? .granted : .missing
+        } catch {
+            // 서버에 닿지 못하면 동의 여부를 단정하지 않는다. 화면을 막기보다 동의로
+            // 보내서 사용자가 다시 시도할 수 있게 한다.
+            consentState = .missing
+        }
     }
 
     private var callBinding: Binding<ActiveCall?> {
         Binding(get: { callCenter.activeCall }, set: { _ in })
-    }
-}
-
-struct HomeView: View {
-    @ObservedObject private var session = AppSession.shared
-    @ObservedObject private var callCenter = VoipCallCenter.shared
-
-    var body: some View {
-        List {
-            if let user = session.user {
-                Section("내 계정") {
-                    LabeledContent("이름", value: user.name)
-                    LabeledContent("역할", value: user.role == "CHILD" ? "자녀" : "부모")
-                }
-            }
-
-            if session.user?.role == "CHILD" {
-                Section("가족") {
-                    if session.members.isEmpty {
-                        Text("초대한 부모가 없다. 백엔드에서 초대를 먼저 만든다.")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(session.members) { member in
-                        MemberRow(member: member) {
-                            guard let userId = member.userId else { return }
-                            callCenter.startOutgoingCall(calleeId: userId, name: member.name)
-                        }
-                    }
-                }
-            } else {
-                Section("수신 대기") {
-                    Text("자녀가 전화를 걸면 잠금화면에 통화 화면이 뜬다.")
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            DeveloperSection(callCenter: callCenter)
-
-            Section {
-                Button("로그아웃", role: .destructive) { session.logout() }
-            }
-        }
-        .navigationTitle("콜록")
-        .refreshable { await session.refreshMembers() }
-        .task { await session.refreshMembers() }
-    }
-}
-
-private struct MemberRow: View {
-    let member: CollogAPI.Member
-    let onCall: () -> Void
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(member.name)
-                Text(statusText)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button(action: onCall) {
-                Image(systemName: "phone.fill")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!member.isCallable)
-        }
-    }
-
-    private var statusText: String {
-        switch member.status {
-        case "CONSENT_GRANTED": return "동의 완료"
-        case "CONSENT_PENDING": return "동의 대기"
-        case "CONSENT_DENIED": return "동의 거절"
-        case "INVITED": return "초대됨"
-        default: return member.status
-        }
-    }
-}
-
-// 실기기 디버깅용. APNs 검증에 필요한 토큰을 눈으로 확인한다.
-private struct DeveloperSection: View {
-    @ObservedObject var callCenter: VoipCallCenter
-
-    var body: some View {
-        Section("개발 정보") {
-            TokenRow(title: "VoIP 토큰", token: callCenter.voipToken)
-            TokenRow(title: "APNs 토큰", token: callCenter.apnsToken)
-            DisclosureGroup("이벤트 로그") {
-                if !callCenter.events.isEmpty {
-                    Button("전체 로그 복사") {
-                        UIPasteboard.general.string = callCenter.events.reversed().joined(separator: "\n")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-                ForEach(Array(callCenter.events.enumerated()), id: \.offset) { _, event in
-                    Text(event)
-                        .font(.caption)
-                        .textSelection(.enabled)
-                }
-            }
-        }
-    }
-}
-
-private struct TokenRow: View {
-    let title: String
-    let token: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.subheadline)
-            if let token {
-                Text(token)
-                    .font(.system(.caption2, design: .monospaced))
-                    .textSelection(.enabled)
-                Button("복사") { UIPasteboard.general.string = token }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            } else {
-                Text("발급 대기 중").foregroundStyle(.secondary)
-            }
-        }
     }
 }
 

@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from app.config import Settings
 from app.database import Database
@@ -22,7 +22,7 @@ from app.models import (
     Transcript,
 )
 from app.services.acoustics import AcousticAnalysisInput, AcousticAnalyzer
-from app.services.deepgram import SttGateway
+from app.services.deepgram import SttGateway, SttResult
 from app.services.gemini import ExtractionGateway
 from app.services.repeat_detector import detect_repeat_events
 from app.services.signals import SignalService
@@ -32,6 +32,27 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessingPipeline:
+    def log_stt_result(self, call_id: str, speaker: str, result: SttResult) -> None:
+        logger.info(
+            "STT %s call=%s provider=%s speech=%.1fs segments=%d words=%d",
+            speaker,
+            call_id,
+            result.provider,
+            result.speech_seconds,
+            len(result.segments),
+            len(result.words),
+        )
+        if not self.settings.log_stt_transcript:
+            return
+        for segment in result.segments:
+            logger.info(
+                "STT %s %7.2f-%7.2fs | %s",
+                speaker,
+                segment.start_ms / 1000,
+                segment.end_ms / 1000,
+                segment.text,
+            )
+
     def __init__(
         self,
         settings: Settings,
@@ -139,7 +160,28 @@ class ProcessingPipeline:
                 elapsed = datetime.now(UTC) - aware_datetime(call.ended_at)
                 if elapsed.total_seconds() < self.settings.raw_audio_wait_seconds:
                     return
-            call.state = CallState.PROCESSING.value
+            # 여기서 PROCESSING을 조건부 UPDATE로 선점한다. `process()`의 asyncio.Lock은
+            # 프로세스 안에서만 유효한데, scripts/replay_call.py는 백엔드와 별개 프로세스로
+            # 같은 DB를 본다. 서버의 10초 cleanup_loop(main.py)와 replay가 같은 통화를
+            # 동시에 분석하면, 먼저 끝난 쪽이 purge_call_audio로 오디오를 지워서 뒤늦은 쪽이
+            # storage.read에서 NoSuchKey로 죽거나 health_extractions UNIQUE 제약에 걸린다.
+            # rowcount가 0이면 다른 쪽이 이미 가져간 것이므로 조용히 물러난다.
+            claimed = await session.execute(
+                update(CallRecord)
+                .where(
+                    CallRecord.id == call_id,
+                    CallRecord.state.not_in(
+                        [
+                            CallState.PROCESSING.value,
+                            CallState.ANALYZED.value,
+                            CallState.ANALYSIS_EXCLUDED.value,
+                        ]
+                    ),
+                )
+                .values(state=CallState.PROCESSING.value)
+            )
+            if claimed.rowcount == 0:
+                return
             await session.commit()
 
         # Egress가 없는 개발 환경에서는 부모 기기가 올린 분석용 PCM을 부모 음성으로 쓴다.
@@ -147,10 +189,12 @@ class ProcessingPipeline:
         parent_source = parent_egress or raw_asset
         parent_audio = await self.storage.read(parent_source.uri)
         parent_stt = await self.stt.transcribe(parent_audio, parent_source.content_type, "PARENT")
+        self.log_stt_result(call_id, "PARENT", parent_stt)
         stt_results = [("PARENT", parent_stt)]
         if child_egress:
             child_audio = await self.storage.read(child_egress.uri)
             child_stt = await self.stt.transcribe(child_audio, child_egress.content_type, "CHILD")
+            self.log_stt_result(call_id, "CHILD", child_stt)
             stt_results.append(("CHILD", child_stt))
 
         raw_segments = sorted(
@@ -345,15 +389,22 @@ class ProcessingPipeline:
             await session.commit()
 
     async def purge_expired_audio(self) -> int:
+        # 만료 기준은 통화가 끝난 시각이 아니라 오디오가 실제로 저장된 시각이다.
+        # `ended_at`은 논리적인 통화 시각이라 뒤로 조작될 수 있는데(개발용 replay는 통화를
+        # 몇 주 전으로 넣는다), 그걸 기준으로 삼으면 방금 올라온 오디오가 이미 만료된 것으로
+        # 보여서 분석 전에 지워진다. `uploaded_at`을 쓰면 "저장된 지 24시간" 이라는 보관
+        # 약속은 그대로면서 아직 분석 못 한 오디오를 먼저 지우는 일이 없다.
         cutoff = datetime.now(UTC) - timedelta(hours=24)
         async with self.database.sessions() as session:
             call_ids = list(
                 await session.scalars(
-                    select(CallRecord.id).where(
-                        CallRecord.ended_at.is_not(None),
-                        CallRecord.ended_at < cutoff,
-                        CallRecord.raw_audio_purged_at.is_(None),
+                    select(AudioAsset.call_id)
+                    .where(
+                        AudioAsset.status != AssetStatus.PURGED.value,
+                        AudioAsset.uploaded_at.is_not(None),
+                        AudioAsset.uploaded_at < cutoff,
                     )
+                    .distinct()
                 )
             )
         for call_id in call_ids:
@@ -372,6 +423,26 @@ class ProcessingPipeline:
         for call_id in call_ids:
             await self.process(call_id)
         return len(call_ids)
+
+    async def release_stale_claims(self) -> int:
+        """기동 시 PROCESSING에 걸려 있는 통화를 ENDED로 되돌린다.
+
+        PROCESSING은 선점 표시라서 다른 쪽이 잡고 있는 동안 재처리되지 않는다. 분석 중이던
+        프로세스가 죽으면 표시만 남아 영영 안 풀리는데, 기동 시점에는 그 프로세스가 살아
+        있을 수 없으므로 여기서 되돌려야 cleanup_loop이 다시 집어간다.
+        """
+        async with self.database.sessions() as session:
+            released = await session.execute(
+                update(CallRecord)
+                .where(CallRecord.state == CallState.PROCESSING.value)
+                .values(state=CallState.ENDED.value)
+            )
+            await session.commit()
+        if released.rowcount:
+            logger.info(
+                "PROCESSING에 멈춰 있던 통화 %d건을 재처리 대기로 돌렸습니다", released.rowcount
+            )
+        return released.rowcount
 
 
 def aware_datetime(value: datetime) -> datetime:
