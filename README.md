@@ -140,6 +140,13 @@ flowchart LR
 | `F0_VARIATION` | `librosa.pyin` 기본주파수의 semitone MAD | ⚠️ 유성음 게이트에 자주 걸림 |
 | `COUGH_EVENTS` | HeAR `event_detector_small` ONNX (MobileNet-V3) | 🚫 **의도적으로 비활성** |
 
+**HeAR가 무엇이고, 왜 임베딩 모델이 아닌가.** HeAR(Health Acoustic Representations)는 Google이
+HAI-DEF로 공개한 건강 음향 foundation model이다. 다만 `google/hear-pytorch`는 2초 클립을 512차원
+표현으로 바꾸는 약 1.21 GB ViT-L masked autoencoder일 뿐 **기침 판정기가 아니다.** 그래서 같은
+저장소가 함께 배포하는 경량 event detector(MobileNet-V3, `Cough`·`Throat Clear`·`Sneeze` 등 8
+class)만 ONNX 약 5 MB로 변환해 쓴다 — `Throat Clear`가 별도 class라 무엇을 기침으로 오인했는지
+구분할 수 있고, 런타임에 TensorFlow가 필요 없다. 가중치는 약관 대상이라 저장소에 없다([§10](#10-라이선스)).
+
 음향 런타임은 `librosa.pyin`과 `onnxruntime`만 쓴다 — TensorFlow 없이 돈다.
 
 품질 게이트(길이 5초 이상, 클리핑 1% 미만, 활성 구간 −55 dBFS 이상)를 **하나라도 못 넘기면 값을
@@ -282,5 +289,16 @@ docker compose exec backend python -m scripts.preflight_two_iphone
 | 문효재 | 백엔드 API 및 아키텍처 설계, 배포·클라우드 서버 구성, schema guard 및 DB 검증 |
 | 심재현 | iOS 전체 (PushKit · CallKit · LiveKit · 화면) 인증, 온디바이스 PCM 캡처 구현, HeAR 기침 detector 구현 |
 
+---
+
+## 10. 라이선스
+
+| 대상 | 조건 |
+|---|---|
+| **HeAR event detector** (`google/hear`) | Google **Health AI Developer Foundations(HAI-DEF) 이용약관**. gated repo라 [모델 페이지](https://huggingface.co/google/hear)에서 약관에 동의하고 `HF_TOKEN`으로 `scripts/fetch_cough_model.py`를 한 번 실행해 각자 받는다 |
+| 가중치 취급 | 저장소에 커밋하지 않는다. `backend/models/`는 `.gitignore` 대상이고, 변환 산출물 옆에 출처 revision·sha256·변경 사실과 약관 링크를 담은 `NOTICE`를 함께 남긴다 |
+| 사용 제한 | 약관 3.2절에 따라 규제기관이 Google을 의료기기 제조사로 볼 수 있는 용도로 쓰지 않는다. 콜록은 이 출력을 진단·위험군 라벨·응급도 판정에 쓰지 않는다는 [§1](#1-무엇을-푸는지)의 제약과 그대로 맞물린다 |
+| Deepgram · Gemini · LiveKit | 각 provider 약관을 따르며, 현재 구성은 해커톤 더미 데이터 전용이다 ([§6](#6-알려진-한계)) |
+| 이 저장소의 코드 | 해커톤 제출물. 별도 `LICENSE` 파일은 아직 두지 않았고, 공개 배포 전에 정한다 |
 
 ---
